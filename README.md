@@ -30,6 +30,40 @@ A Model Context Protocol (MCP) server that provides browser automation capabilit
 }
 ```
 
+### Using from GitHub
+
+You can also run directly from a GitHub repository:
+
+```js
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "github:willer/playwright-mcp"
+      ]
+    }
+  }
+}
+```
+
+Or with specific options:
+
+```js
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": [
+        "github:willer/playwright-mcp",
+        "vision",     // Use screenshot mode
+        "headless"    // Run in headless mode
+      ]
+    }
+  }
+}
+```
+
 
 #### Installation in VS Code
 
