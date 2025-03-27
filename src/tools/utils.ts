@@ -72,54 +72,45 @@ async function waitForCompletion<R>(page: playwright.Page, callback: () => Promi
   }
 }
 
-export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false, includeScreenshot: boolean = false): Promise<ToolResult> {
-  const page = await context.existingPage();
-  await waitForCompletion(page, () => callback(page));
-  
+export async function runAndWait(context: Context, status: string, callback: () => Promise<any>, snapshot: boolean = false, includeScreenshot: boolean = false): Promise<ToolResult> {
+  const page = context.existingPage();
+  const dismissFileChooser = context.hasFileChooser();
+  await waitForCompletion(page, () => callback());
+  if (dismissFileChooser)
+    context.clearFileChooser();
+    
   if (!snapshot) {
     return {
       content: [{ type: 'text' as const, text: status }],
     };
   }
   
-  // Capture ARIA snapshot
-  const ariaSnapshot = await page.locator('html').ariaSnapshot({ ref: true });
-  const content: (ImageContent | TextContent)[] = [{
-    type: 'text' as const,
-    text: `${status ? `${status}\n` : ''}
-- Page URL: ${page.url()}
-- Page Title: ${await page.title()}
-- Page Snapshot
-\`\`\`yaml
-${ariaSnapshot}
-\`\`\``
-  }];
-  
-  // Optionally capture screenshot
-  if (includeScreenshot) {
-    const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
-    content.push({
-      type: 'image' as const,
-      data: screenshot.toString('base64'),
-      mimeType: 'image/jpeg'
-    });
-  }
-  
-  return { content };
+  return await captureAriaSnapshot(context, status, includeScreenshot);
 }
 
-export async function captureAriaSnapshot(page: playwright.Page, status: string = '', includeScreenshot: boolean = false): Promise<ToolResult> {
-  const snapshot = await page.locator('html').ariaSnapshot({ ref: true });
-  const content: (ImageContent | TextContent)[] = [{ 
+export async function captureAriaSnapshot(context: Context, status: string = '', includeScreenshot: boolean = false): Promise<ToolResult> {
+  const page = context.existingPage();
+  const lines = [];
+  if (status)
+    lines.push(`${status}`);
+  lines.push(
+      '',
+      `- Page URL: ${page.url()}`,
+      `- Page Title: ${await page.title()}`
+  );
+  if (context.hasFileChooser())
+    lines.push(`- There is a file chooser visible that requires browser_choose_file to be called`);
+  lines.push(
+      `- Page Snapshot`,
+      '```yaml',
+      await context.allFramesSnapshot(),
+      '```',
+      ''
+  );
+  
+  const content: (ImageContent | TextContent)[] = [{
     type: 'text' as const, 
-    text: `${status ? `${status}\n` : ''}
-- Page URL: ${page.url()}
-- Page Title: ${await page.title()}
-- Page Snapshot
-\`\`\`yaml
-${snapshot}
-\`\`\`
-`
+    text: lines.join('\n')
   }];
   
   // Optionally capture screenshot

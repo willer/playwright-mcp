@@ -14,9 +14,12 @@
  * limitations under the License.
  */
 
+import fs from 'fs/promises';
+import { spawn } from 'node:child_process';
+import path from 'node:path';
 import { test, expect } from './fixtures';
 
-test('test tool list', async ({ server }) => {
+test('test tool list', async ({ server, visionServer }) => {
   const list = await server.send({
     jsonrpc: '2.0',
     id: 1,
@@ -37,6 +40,9 @@ test('test tool list', async ({ server }) => {
           name: 'browser_go_forward',
         }),
         expect.objectContaining({
+          name: 'browser_choose_file',
+        }),
+        expect.objectContaining({
           name: 'browser_snapshot',
         }),
         expect.objectContaining({
@@ -52,6 +58,9 @@ test('test tool list', async ({ server }) => {
           name: 'browser_select_option',
         }),
         expect.objectContaining({
+          name: 'browser_take_screenshot',
+        }),
+        expect.objectContaining({
           name: 'browser_press_key',
         }),
         expect.objectContaining({
@@ -64,6 +73,56 @@ test('test tool list', async ({ server }) => {
           name: 'browser_close',
         }),
       ],
+    }),
+  }));
+
+  const visionList = await visionServer.send({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'tools/list',
+  });
+
+  expect(visionList).toEqual(expect.objectContaining({
+    id: 1,
+    result: expect.objectContaining({
+      tools: expect.arrayContaining([
+        expect.objectContaining({
+          name: 'browser_navigate',
+        }),
+        expect.objectContaining({
+          name: 'browser_go_back',
+        }),
+        expect.objectContaining({
+          name: 'browser_go_forward',
+        }),
+        expect.objectContaining({
+          name: 'browser_screenshot',
+        }),
+        expect.objectContaining({
+          name: 'browser_move_mouse',
+        }),
+        expect.objectContaining({
+          name: 'browser_click',
+        }),
+        expect.objectContaining({
+          name: 'browser_drag',
+        }),
+        expect.objectContaining({
+          name: 'browser_type',
+        }),
+        expect.objectContaining({
+          name: 'browser_press_key',
+        }),
+        expect.objectContaining({
+          name: 'browser_wait',
+        }),
+        expect.objectContaining({
+          name: 'browser_save_as_pdf',
+        }),
+        expect.objectContaining({
+          name: 'browser_close',
+        }),
+      ]),
     }),
   }));
 });
@@ -362,4 +421,140 @@ test('browser://console', async ({ server }) => {
       }],
     }),
   }));
+});
+
+test('stitched aria frames', async ({ server }) => {
+  const response = await server.send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'browser_navigate',
+      arguments: {
+        url: 'data:text/html,<h1>Hello</h1><iframe src="data:text/html,<h1>World</h1>"></iframe><iframe src="data:text/html,<h1>Should be invisible</h1>" style="display: none;"></iframe>',
+      },
+    },
+  });
+
+  expect(response).toEqual(expect.objectContaining({
+    id: 2,
+    result: {
+      content: [{
+        type: 'text',
+        text: `
+- Page URL: data:text/html,<h1>Hello</h1><iframe src="data:text/html,<h1>World</h1>"></iframe><iframe src="data:text/html,<h1>Should be invisible</h1>" style="display: none;"></iframe>
+- Page Title: 
+- Page Snapshot
+\`\`\`yaml
+- document [ref=s1e2]:
+  - heading \"Hello\" [level=1] [ref=s1e4]
+
+# iframe src=data:text/html,<h1>World</h1>
+- document [ref=f0s1e2]:
+  - heading \"World\" [level=1] [ref=f0s1e4]
+\`\`\`
+`,
+      }],
+    },
+  }));
+});
+
+test('browser_choose_file', async ({ server }) => {
+  let response = await server.send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'browser_navigate',
+      arguments: {
+        url: 'data:text/html,<html><title>Title</title><input type="file" /><button>Button</button></html>',
+      },
+    },
+  });
+
+  expect(response.result.content[0].text).toContain('- textbox [ref=s1e4]');
+
+  response = await server.send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'browser_click',
+      arguments: {
+        element: 'Textbox',
+        ref: 's1e4',
+      },
+    },
+  });
+
+  expect(response.result.content[0].text).toContain('There is a file chooser visible that requires browser_choose_file to be called');
+
+  const filePath = test.info().outputPath('test.txt');
+  await fs.writeFile(filePath, 'Hello, world!');
+  response = await server.send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'browser_choose_file',
+      arguments: {
+        paths: [filePath],
+      },
+    },
+  });
+
+  expect(response.result.content[0].text).not.toContain('There is a file chooser visible that requires browser_choose_file to be called');
+  expect(response.result.content[0].text).toContain('textbox [ref=s3e4]: C:\\fakepath\\test.txt');
+
+  response = await server.send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'browser_click',
+      arguments: {
+        element: 'Textbox',
+        ref: 's3e4',
+      },
+    },
+  });
+  expect(response.result.content[0].text).toContain('There is a file chooser visible that requires browser_choose_file to be called');
+  expect(response.result.content[0].text).toContain('button "Button" [ref=s4e5]');
+
+  response = await server.send({
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: {
+      name: 'browser_click',
+      arguments: {
+        element: 'Button',
+        ref: 's4e5',
+      },
+    },
+  });
+  expect(response.result.content[0].text, 'not submitting browser_choose_file dismisses file chooser').not.toContain('There is a file chooser visible that requires browser_choose_file to be called');
+});
+
+test('sse transport', async () => {
+  const cp = spawn('node', [path.join(__dirname, '../cli.js'), '--port', '0'], { stdio: 'pipe' });
+  try {
+    let stdout = '';
+    const url = await new Promise<string>(resolve => cp.stdout?.on('data', data => {
+      stdout += data.toString();
+      const match = stdout.match(/Listening on (http:\/\/.*)/);
+      if (match)
+        resolve(match[1]);
+    }));
+
+    // need dynamic import b/c of some ESM nonsense
+    const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js');
+    const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
+    const transport = new SSEClientTransport(new URL(url));
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await client.connect(transport);
+    await client.ping();
+  } finally {
+    cp.kill();
+  }
 });

@@ -23,6 +23,8 @@ export class Context {
   private _page: playwright.Page | undefined;
   private _console: playwright.ConsoleMessage[] = [];
   private _createPagePromise: Promise<playwright.Page> | undefined;
+  private _fileChooser: playwright.FileChooser | undefined;
+  private _lastSnapshotFrames: playwright.FrameLocator[] = [];
 
   constructor(userDataDir: string, launchOptions?: playwright.LaunchOptions) {
     this._userDataDir = userDataDir;
@@ -48,6 +50,9 @@ export class Context {
           this._console.length = 0;
       });
       page.on('close', () => this._onPageClose());
+      page.on('filechooser', chooser => this._fileChooser = chooser);
+      page.setDefaultNavigationTimeout(60000);
+      page.setDefaultTimeout(5000);
       this._page = page;
       this._browser = browser;
       return page;
@@ -69,10 +74,11 @@ export class Context {
     this._createPagePromise = undefined;
     this._browser = undefined;
     this._page = undefined;
+    this._fileChooser = undefined;
     this._console.length = 0;
   }
 
-  async existingPage(): Promise<playwright.Page> {
+  existingPage(): playwright.Page {
     if (!this._page)
       throw new Error('Navigate to a location to create a page');
     return this._page;
@@ -81,7 +87,7 @@ export class Context {
   async console(): Promise<playwright.ConsoleMessage[]> {
     return this._console;
   }
-
+  
   async clearConsole(): Promise<void> {
     this._console.length = 0;
   }
@@ -90,6 +96,21 @@ export class Context {
     if (!this._page)
       return;
     await this._page.close();
+  }
+
+  async submitFileChooser(paths: string[]) {
+    if (!this._fileChooser)
+      throw new Error('No file chooser visible');
+    await this._fileChooser.setFiles(paths);
+    this._fileChooser = undefined;
+  }
+
+  hasFileChooser() {
+    return !!this._fileChooser;
+  }
+
+  clearFileChooser() {
+    this._fileChooser = undefined;
   }
 
   private async _createPage(): Promise<{ browser?: playwright.Browser, page: playwright.Page }> {
@@ -105,5 +126,43 @@ export class Context {
     const context = await playwright.chromium.launchPersistentContext(this._userDataDir, this._launchOptions);
     const [page] = context.pages();
     return { page };
+  }
+
+  async allFramesSnapshot() {
+    const page = this.existingPage();
+    const visibleFrames = await page.locator('iframe').filter({ visible: true }).all();
+    this._lastSnapshotFrames = visibleFrames.map(frame => frame.contentFrame());
+
+    const snapshots = await Promise.all([
+      page.locator('html').ariaSnapshot({ ref: true }),
+      ...this._lastSnapshotFrames.map(async (frame, index) => {
+        const snapshot = await frame.locator('html').ariaSnapshot({ ref: true });
+        const args = [];
+        const src = await frame.owner().getAttribute('src');
+        if (src)
+          args.push(`src=${src}`);
+        const name = await frame.owner().getAttribute('name');
+        if (name)
+          args.push(`name=${name}`);
+        return `\n# iframe ${args.join(' ')}\n` + snapshot.replaceAll('[ref=', `[ref=f${index}`);
+      })
+    ]);
+
+    return snapshots.join('\n');
+  }
+
+  refLocator(ref: string): playwright.Locator {
+    const page = this.existingPage();
+    let frame: playwright.Frame | playwright.FrameLocator = page.mainFrame();
+    const match = ref.match(/^f(\d+)(.*)/);
+    if (match) {
+      const frameIndex = parseInt(match[1], 10);
+      if (!this._lastSnapshotFrames[frameIndex])
+        throw new Error(`Frame does not exist. Provide ref from the most current snapshot.`);
+      frame = this._lastSnapshotFrames[frameIndex];
+      ref = match[2];
+    }
+
+    return frame.locator(`aria-ref=${ref}`);
   }
 }

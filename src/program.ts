@@ -20,6 +20,7 @@ import path from 'path';
 
 import { program } from 'commander';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+// Server Side Events transport is not available in the current version
 
 import { createServer } from './index';
 
@@ -49,6 +50,7 @@ program
     .option('--user-data-dir <path>', 'Path to the user data directory')
     .option('--vision', 'Run server that uses screenshots (Aria snapshots are used by default)')
     .option('-S, --screenshot', 'Run server that uses screenshots (Aria snapshots are used by default)')
+    .option('--port <port>', 'Port to listen on for SSE transport.')
     .action(async options => {
       const launchOptions: LaunchOptions = {
         headless: !!(options.headless || !options.headed || hasHeadless),
@@ -62,6 +64,10 @@ program
       });
       setupExitWatchdog(server);
 
+      // SSE transport is not available in the current version
+      if (options.port) {
+        console.warn('SSE transport is not available in the current version, using StdioServerTransport instead.');
+      }
       const transport = new StdioServerTransport();
       await server.connect(transport);
     });

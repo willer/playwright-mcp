@@ -29,7 +29,7 @@ export const screenshot: Tool = {
   },
 
   handle: async context => {
-    const page = await context.existingPage();
+    const page = context.existingPage();
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
     return {
       content: [{ type: 'image', data: screenshot.toString('base64'), mimeType: 'image/jpeg' }],
@@ -55,7 +55,7 @@ export const moveMouse: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = moveMouseSchema.parse(params);
-    const page = await context.existingPage();
+    const page = context.existingPage();
     await page.mouse.move(validatedParams.x, validatedParams.y);
     return {
       content: [{ type: 'text', text: `Moved mouse to (${validatedParams.x}, ${validatedParams.y})` }],
@@ -76,8 +76,9 @@ export const click: Tool = {
   },
 
   handle: async (context, params) => {
-    return await runAndWait(context, 'Clicked mouse', async page => {
-      const validatedParams = clickSchema.parse(params);
+    const validatedParams = clickSchema.parse(params);
+    return await runAndWait(context, 'Clicked mouse', async () => {
+      const page = context.existingPage();
       await page.mouse.move(validatedParams.x, validatedParams.y);
       await page.mouse.down();
       await page.mouse.up();
@@ -101,7 +102,8 @@ export const drag: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = dragSchema.parse(params);
-    return await runAndWait(context, `Dragged mouse from (${validatedParams.startX}, ${validatedParams.startY}) to (${validatedParams.endX}, ${validatedParams.endY})`, async page => {
+    return await runAndWait(context, `Dragged mouse from (${validatedParams.startX}, ${validatedParams.startY}) to (${validatedParams.endX}, ${validatedParams.endY})`, async () => {
+      const page = context.existingPage();
       await page.mouse.move(validatedParams.startX, validatedParams.startY);
       await page.mouse.down();
       await page.mouse.move(validatedParams.endX, validatedParams.endY);
@@ -124,7 +126,8 @@ export const type: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = typeSchema.parse(params);
-    return await runAndWait(context, `Typed text "${validatedParams.text}"`, async page => {
+    return await runAndWait(context, `Typed text "${validatedParams.text}"`, async () => {
+      const page = context.existingPage();
       await page.keyboard.type(validatedParams.text);
       if (validatedParams.submit)
         await page.keyboard.press('Enter');

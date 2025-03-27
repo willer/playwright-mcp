@@ -36,31 +36,7 @@ export const snapshot: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = snapshotSchema.parse(params);
-    const page = await context.existingPage();
-    
-    // Capture ARIA snapshot
-    const snapshot = await page.locator('html').ariaSnapshot({ ref: true });
-    const content: (ImageContent | TextContent)[] = [{
-      type: 'text' as const,
-      text: `- Page URL: ${page.url()}
-- Page Title: ${await page.title()}
-- Page Snapshot
-\`\`\`yaml
-${snapshot}
-\`\`\``
-    }];
-    
-    // Optionally capture screenshot
-    if (validatedParams.includeScreenshot) {
-      const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
-      content.push({
-        type: 'image' as const,
-        data: screenshot.toString('base64'),
-        mimeType: 'image/jpeg'
-      });
-    }
-    
-    return { content };
+    return await captureAriaSnapshot(context, '', validatedParams.includeScreenshot);
   },
 };
 
@@ -79,7 +55,7 @@ export const click: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = elementSchema.parse(params);
-    return runAndWait(context, `"${validatedParams.element}" clicked`, page => refLocator(page, validatedParams.ref).click(), true, validatedParams.includeScreenshot);
+    return runAndWait(context, `"${validatedParams.element}" clicked`, () => context.refLocator(validatedParams.ref).click(), true, validatedParams.includeScreenshot);
   },
 };
 
@@ -100,9 +76,9 @@ export const drag: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = dragSchema.parse(params);
-    return runAndWait(context, `Dragged "${validatedParams.startElement}" to "${validatedParams.endElement}"`, async page => {
-      const startLocator = refLocator(page, validatedParams.startRef);
-      const endLocator = refLocator(page, validatedParams.endRef);
+    return runAndWait(context, `Dragged "${validatedParams.startElement}" to "${validatedParams.endElement}"`, async () => {
+      const startLocator = context.refLocator(validatedParams.startRef);
+      const endLocator = context.refLocator(validatedParams.endRef);
       await startLocator.dragTo(endLocator);
     }, true, validatedParams.includeScreenshot);
   },
@@ -117,7 +93,7 @@ export const hover: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = elementSchema.parse(params);
-    return runAndWait(context, `Hovered over "${validatedParams.element}"`, page => refLocator(page, validatedParams.ref).hover(), true, validatedParams.includeScreenshot);
+    return runAndWait(context, `Hovered over "${validatedParams.element}"`, () => context.refLocator(validatedParams.ref).hover(), true, validatedParams.includeScreenshot);
   },
 };
 
@@ -135,8 +111,8 @@ export const type: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = typeSchema.parse(params);
-    return await runAndWait(context, `Typed "${validatedParams.text}" into "${validatedParams.element}"`, async page => {
-      const locator = refLocator(page, validatedParams.ref);
+    return await runAndWait(context, `Typed "${validatedParams.text}" into "${validatedParams.element}"`, async () => {
+      const locator = context.refLocator(validatedParams.ref);
       await locator.fill(validatedParams.text);
       if (validatedParams.submit)
         await locator.press('Enter');
@@ -157,13 +133,9 @@ export const selectOption: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = selectOptionSchema.parse(params);
-    return await runAndWait(context, `Selected option in "${validatedParams.element}"`, async page => {
-      const locator = refLocator(page, validatedParams.ref);
+    return await runAndWait(context, `Selected option in "${validatedParams.element}"`, async () => {
+      const locator = context.refLocator(validatedParams.ref);
       await locator.selectOption(validatedParams.values);
     }, true, validatedParams.includeScreenshot);
   },
 };
-
-function refLocator(page: playwright.Page, ref: string): playwright.Locator {
-  return page.locator(`aria-ref=${ref}`);
-}
