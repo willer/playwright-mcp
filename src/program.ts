@@ -28,20 +28,37 @@ import type { LaunchOptions } from 'playwright';
 
 const packageJSON = require('../package.json');
 
+// Process raw arguments before commander to handle argumentless options
+const rawArgs = process.argv.slice(2);
+const hasHeadless = rawArgs.includes('headless');
+const hasVision = rawArgs.includes('vision');
+
+// Remove raw arguments so commander doesn't complain
+if (hasHeadless) {
+  process.argv = process.argv.filter(arg => arg !== 'headless');
+}
+if (hasVision) {
+  process.argv = process.argv.filter(arg => arg !== 'vision');
+}
+
 program
     .version('Version ' + packageJSON.version)
     .name(packageJSON.name)
     .option('--headless', 'Run browser in headless mode, headed by default')
+    .option('-H, --no-headed', 'Run browser in headless mode, headed by default')
     .option('--user-data-dir <path>', 'Path to the user data directory')
     .option('--vision', 'Run server that uses screenshots (Aria snapshots are used by default)')
+    .option('-S, --screenshot', 'Run server that uses screenshots (Aria snapshots are used by default)')
     .action(async options => {
       const launchOptions: LaunchOptions = {
-        headless: !!options.headless,
+        headless: !!(options.headless || !options.headed || hasHeadless),
         channel: 'chrome',
       };
+      const visionMode = !!(options.vision || options.screenshot || hasVision);
       const server = createServer({
         userDataDir: options.userDataDir ?? await userDataDir(),
         launchOptions,
+        vision: visionMode,
       });
       setupExitWatchdog(server);
 

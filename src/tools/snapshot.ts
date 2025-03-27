@@ -21,22 +21,53 @@ import { captureAriaSnapshot, runAndWait } from './utils';
 
 import type * as playwright from 'playwright';
 import type { Tool } from './tool';
+import type { ImageContent, TextContent } from '@modelcontextprotocol/sdk/types';
+
+const snapshotSchema = z.object({
+  includeScreenshot: z.boolean().optional().describe('Include a screenshot along with the accessibility snapshot'),
+});
 
 export const snapshot: Tool = {
   schema: {
     name: 'browser_snapshot',
-    description: 'Capture accessibility snapshot of the current page, this is better than screenshot',
-    inputSchema: zodToJsonSchema(z.object({})),
+    description: 'Capture accessibility snapshot of the current page, optionally with screenshot',
+    inputSchema: zodToJsonSchema(snapshotSchema),
   },
 
-  handle: async context => {
-    return await captureAriaSnapshot(await context.existingPage());
+  handle: async (context, params) => {
+    const validatedParams = snapshotSchema.parse(params);
+    const page = await context.existingPage();
+    
+    // Capture ARIA snapshot
+    const snapshot = await page.locator('html').ariaSnapshot({ ref: true });
+    const content: (ImageContent | TextContent)[] = [{
+      type: 'text' as const,
+      text: `- Page URL: ${page.url()}
+- Page Title: ${await page.title()}
+- Page Snapshot
+\`\`\`yaml
+${snapshot}
+\`\`\``
+    }];
+    
+    // Optionally capture screenshot
+    if (validatedParams.includeScreenshot) {
+      const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
+      content.push({
+        type: 'image' as const,
+        data: screenshot.toString('base64'),
+        mimeType: 'image/jpeg'
+      });
+    }
+    
+    return { content };
   },
 };
 
 const elementSchema = z.object({
   element: z.string().describe('Human-readable element description used to obtain permission to interact with the element'),
   ref: z.string().describe('Exact target element reference from the page snapshot'),
+  includeScreenshot: z.boolean().optional().describe('Include a screenshot along with the accessibility snapshot'),
 });
 
 export const click: Tool = {
@@ -48,7 +79,7 @@ export const click: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = elementSchema.parse(params);
-    return runAndWait(context, `"${validatedParams.element}" clicked`, page => refLocator(page, validatedParams.ref).click(), true);
+    return runAndWait(context, `"${validatedParams.element}" clicked`, page => refLocator(page, validatedParams.ref).click(), true, validatedParams.includeScreenshot);
   },
 };
 
@@ -57,6 +88,7 @@ const dragSchema = z.object({
   startRef: z.string().describe('Exact source element reference from the page snapshot'),
   endElement: z.string().describe('Human-readable target element description used to obtain the permission to interact with the element'),
   endRef: z.string().describe('Exact target element reference from the page snapshot'),
+  includeScreenshot: z.boolean().optional().describe('Include a screenshot along with the accessibility snapshot'),
 });
 
 export const drag: Tool = {
@@ -72,7 +104,7 @@ export const drag: Tool = {
       const startLocator = refLocator(page, validatedParams.startRef);
       const endLocator = refLocator(page, validatedParams.endRef);
       await startLocator.dragTo(endLocator);
-    }, true);
+    }, true, validatedParams.includeScreenshot);
   },
 };
 
@@ -85,7 +117,7 @@ export const hover: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = elementSchema.parse(params);
-    return runAndWait(context, `Hovered over "${validatedParams.element}"`, page => refLocator(page, validatedParams.ref).hover(), true);
+    return runAndWait(context, `Hovered over "${validatedParams.element}"`, page => refLocator(page, validatedParams.ref).hover(), true, validatedParams.includeScreenshot);
   },
 };
 
@@ -108,7 +140,7 @@ export const type: Tool = {
       await locator.fill(validatedParams.text);
       if (validatedParams.submit)
         await locator.press('Enter');
-    }, true);
+    }, true, validatedParams.includeScreenshot);
   },
 };
 
@@ -128,7 +160,7 @@ export const selectOption: Tool = {
     return await runAndWait(context, `Selected option in "${validatedParams.element}"`, async page => {
       const locator = refLocator(page, validatedParams.ref);
       await locator.selectOption(validatedParams.values);
-    }, true);
+    }, true, validatedParams.includeScreenshot);
   },
 };
 

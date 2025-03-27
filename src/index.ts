@@ -18,6 +18,7 @@ import { createServerWithTools } from './server';
 import * as snapshot from './tools/snapshot';
 import * as common from './tools/common';
 import * as screenshot from './tools/screenshot';
+import { consoleMessages } from './tools/console';
 import { console } from './resources/console';
 
 import type { Tool } from './tools/tool';
@@ -30,6 +31,7 @@ const commonTools: Tool[] = [
   common.wait,
   common.pdf,
   common.close,
+  consoleMessages,
 ];
 
 const snapshotTools: Tool[] = [

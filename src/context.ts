@@ -29,9 +29,17 @@ export class Context {
     this._launchOptions = launchOptions;
   }
 
-  async createPage(): Promise<playwright.Page> {
+  async createPage(options?: { headless?: boolean }): Promise<playwright.Page> {
     if (this._createPagePromise)
       return this._createPagePromise;
+    
+    // If headless option is specified, override the launch options temporarily
+    let originalHeadless: boolean | undefined;
+    if (options?.headless !== undefined && this._launchOptions) {
+      originalHeadless = this._launchOptions.headless;
+      this._launchOptions.headless = options.headless;
+    }
+
     this._createPagePromise = (async () => {
       const { browser, page } = await this._createPage();
       page.on('console', event => this._console.push(event));
@@ -44,6 +52,12 @@ export class Context {
       this._browser = browser;
       return page;
     })();
+
+    // Restore original headless setting
+    if (options?.headless !== undefined && this._launchOptions && originalHeadless !== undefined) {
+      this._launchOptions.headless = originalHeadless;
+    }
+    
     return this._createPagePromise;
   }
 
@@ -66,6 +80,10 @@ export class Context {
 
   async console(): Promise<playwright.ConsoleMessage[]> {
     return this._console;
+  }
+
+  async clearConsole(): Promise<void> {
+    this._console.length = 0;
   }
 
   async close() {

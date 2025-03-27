@@ -74,8 +74,9 @@ All the logged in information will be stored in that profile, you can delete it 
 
 ### Running headless browser (Browser without GUI).
 
-This mode is useful for background or batch operations.
+This mode is useful for background or batch operations. You can enable headless mode in two ways:
 
+1. At the MCP server level (all browser sessions will be headless):
 ```js
 {
   "mcpServers": {
@@ -83,9 +84,21 @@ This mode is useful for background or batch operations.
       "command": "npx",
       "args": [
         "@playwright/mcp@latest",
-        "--headless"
+        "--headless"  // or "-H" for short
       ]
     }
+  }
+}
+```
+
+2. At the individual navigation level (per-session control):
+```js
+// In your code when using browser_navigate
+{
+  "name": "browser_navigate",
+  "parameters": {
+    "url": "https://example.com",
+    "headless": true 
   }
 }
 ```
@@ -124,9 +137,16 @@ And then in MCP config, add following to the `env`:
 The tools are available in two modes:
 
 1. **Snapshot Mode** (default): Uses accessibility snapshots for better performance and reliability
-2. **Vision Mode**: Uses screenshots for visual-based interactions
+   - Element targeting uses semantic references
+   - Can now optionally include screenshots with the `includeScreenshot` parameter
+   - More precise and reliable than coordinate-based interactions
 
-To use Vision Mode, add the `--vision` flag when starting the server:
+2. **Vision Mode**: Uses screenshots for visual-based interactions
+   - Uses x,y coordinates for targeting
+   - Requires vision-capable models
+   - Useful for specific visual-oriented tasks
+
+To use Vision Mode, add the `--vision` or `-S` (screenshot) flag when starting the server:
 
 ```js
 {
@@ -135,14 +155,40 @@ To use Vision Mode, add the `--vision` flag when starting the server:
       "command": "npx",
       "args": [
         "@playwright/mcp@latest",
-        "--vision"
+        "--vision"  // or "-S" for short
       ]
     }
   }
 }
 ```
 
-Vision Mode works best with the computer use models that are able to interact with elements using
+#### Screenshot Support in Snapshot Mode
+
+You can now request screenshots in Snapshot Mode without switching to Vision Mode:
+
+```js
+// Request a snapshot with screenshot
+{
+  "name": "browser_snapshot",
+  "parameters": {
+    "includeScreenshot": true
+  }
+}
+
+// Get a screenshot after clicking an element
+{
+  "name": "browser_click",
+  "parameters": {
+    "element": "Submit button", 
+    "ref": "button-1",
+    "includeScreenshot": true
+  }
+}
+```
+
+This combines the precision of ARIA-based element targeting with visual verification capabilities.
+
+Vision Mode still works best with computer use models that are able to interact with elements using
 X Y coordinate space, based on the provided screenshot.
 
 ### Programmatic usage with custom transports
@@ -167,6 +213,7 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
   - Description: Navigate to a URL
   - Parameters:
     - `url` (string): The URL to navigate to
+    - `headless` (boolean, optional): Run in headless mode (no browser UI)
 
 - **browser_go_back**
   - Description: Go back to the previous page
@@ -181,12 +228,14 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
   - Parameters:
     - `element` (string): Human-readable element description used to obtain permission to interact with the element
     - `ref` (string): Exact target element reference from the page snapshot
+    - `includeScreenshot` (boolean, optional): Include a screenshot after the interaction
 
 - **browser_hover**
   - Description: Hover over element on page
   - Parameters:
     - `element` (string): Human-readable element description used to obtain permission to interact with the element
     - `ref` (string): Exact target element reference from the page snapshot
+    - `includeScreenshot` (boolean, optional): Include a screenshot after the interaction
 
 - **browser_drag**
   - Description: Perform drag and drop between two elements
@@ -195,6 +244,7 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
     - `startRef` (string): Exact source element reference from the page snapshot
     - `endElement` (string): Human-readable target element description used to obtain permission to interact with the element
     - `endRef` (string): Exact target element reference from the page snapshot
+    - `includeScreenshot` (boolean, optional): Include a screenshot after the interaction
 
 - **browser_type**
   - Description: Type text into editable element
@@ -203,6 +253,7 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
     - `ref` (string): Exact target element reference from the page snapshot
     - `text` (string): Text to type into the element
     - `submit` (boolean): Whether to submit entered text (press Enter after)
+    - `includeScreenshot` (boolean, optional): Include a screenshot after the interaction
 
 - **browser_select_option**
   - Description: Select option in a dropdown
@@ -210,6 +261,7 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
     - `element` (string): Human-readable element description used to obtain permission to interact with the element
     - `ref` (string): Exact target element reference from the page snapshot
     - `values` (array): Array of values to select in the dropdown.
+    - `includeScreenshot` (boolean, optional): Include a screenshot after the interaction
 
 - **browser_press_key**
   - Description: Press a key on the keyboard
@@ -217,8 +269,9 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
     - `key` (string): Name of the key to press or a character to generate, such as `ArrowLeft` or `a`
 
 - **browser_snapshot**
-  - Description: Capture accessibility snapshot of the current page (better than screenshot)
-  - Parameters: None
+  - Description: Capture accessibility snapshot of the current page, optionally with screenshot
+  - Parameters:
+    - `includeScreenshot` (boolean, optional): Include a screenshot along with the accessibility snapshot
 
 - **browser_save_as_pdf**
   - Description: Save page as PDF
@@ -232,16 +285,22 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
 - **browser_close**
   - Description: Close the page
   - Parameters: None
+  
+- **browser_console**
+  - Description: Get browser console messages
+  - Parameters:
+    - `clear` (boolean, optional): Clear the console after reading
 
 
 ### Vision Mode
 
-Vision Mode provides tools for visual-based interactions using screenshots. Here are all available tools:
+Vision Mode provides tools for visual-based interactions using screenshots. Here are all available tools (including common tools mentioned above):
 
 - **browser_navigate**
   - Description: Navigate to a URL
   - Parameters:
     - `url` (string): The URL to navigate to
+    - `headless` (boolean, optional): Run in headless mode (no browser UI)
 
 - **browser_go_back**
   - Description: Go back to the previous page

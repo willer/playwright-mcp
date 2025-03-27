@@ -17,6 +17,7 @@
 import type * as playwright from 'playwright';
 import type { ToolResult } from './tool';
 import type { Context } from '../context';
+import type { ImageContent, TextContent } from '@modelcontextprotocol/sdk/types';
 
 async function waitForCompletion<R>(page: playwright.Page, callback: () => Promise<R>): Promise<R> {
   const requests = new Set<playwright.Request>();
@@ -71,18 +72,47 @@ async function waitForCompletion<R>(page: playwright.Page, callback: () => Promi
   }
 }
 
-export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false): Promise<ToolResult> {
+export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false, includeScreenshot: boolean = false): Promise<ToolResult> {
   const page = await context.existingPage();
   await waitForCompletion(page, () => callback(page));
-  return snapshot ? captureAriaSnapshot(page, status) : {
-    content: [{ type: 'text', text: status }],
-  };
+  
+  if (!snapshot) {
+    return {
+      content: [{ type: 'text' as const, text: status }],
+    };
+  }
+  
+  // Capture ARIA snapshot
+  const ariaSnapshot = await page.locator('html').ariaSnapshot({ ref: true });
+  const content: (ImageContent | TextContent)[] = [{
+    type: 'text' as const,
+    text: `${status ? `${status}\n` : ''}
+- Page URL: ${page.url()}
+- Page Title: ${await page.title()}
+- Page Snapshot
+\`\`\`yaml
+${ariaSnapshot}
+\`\`\``
+  }];
+  
+  // Optionally capture screenshot
+  if (includeScreenshot) {
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
+    content.push({
+      type: 'image' as const,
+      data: screenshot.toString('base64'),
+      mimeType: 'image/jpeg'
+    });
+  }
+  
+  return { content };
 }
 
-export async function captureAriaSnapshot(page: playwright.Page, status: string = ''): Promise<ToolResult> {
+export async function captureAriaSnapshot(page: playwright.Page, status: string = '', includeScreenshot: boolean = false): Promise<ToolResult> {
   const snapshot = await page.locator('html').ariaSnapshot({ ref: true });
-  return {
-    content: [{ type: 'text', text: `${status ? `${status}\n` : ''}
+  const content: (ImageContent | TextContent)[] = [{ 
+    type: 'text' as const, 
+    text: `${status ? `${status}\n` : ''}
 - Page URL: ${page.url()}
 - Page Title: ${await page.title()}
 - Page Snapshot
@@ -90,6 +120,17 @@ export async function captureAriaSnapshot(page: playwright.Page, status: string 
 ${snapshot}
 \`\`\`
 `
-    }],
-  };
+  }];
+  
+  // Optionally capture screenshot
+  if (includeScreenshot) {
+    const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
+    content.push({
+      type: 'image' as const,
+      data: screenshot.toString('base64'),
+      mimeType: 'image/jpeg'
+    });
+  }
+  
+  return { content };
 }

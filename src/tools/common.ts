@@ -26,6 +26,7 @@ import type { ToolFactory, Tool } from './tool';
 
 const navigateSchema = z.object({
   url: z.string().describe('The URL to navigate to'),
+  headless: z.boolean().optional().describe('Run in headless mode (no browser UI)'),
 });
 
 export const navigate: ToolFactory = snapshot => ({
@@ -36,7 +37,9 @@ export const navigate: ToolFactory = snapshot => ({
   },
   handle: async (context, params) => {
     const validatedParams = navigateSchema.parse(params);
-    const page = await context.createPage();
+    const page = await context.createPage({ 
+      headless: validatedParams.headless 
+    });
     await page.goto(validatedParams.url, { waitUntil: 'domcontentloaded' });
     // Cap load event to 5 seconds, the page is operational at this point.
     await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
@@ -45,7 +48,7 @@ export const navigate: ToolFactory = snapshot => ({
     return {
       content: [{
         type: 'text',
-        text: `Navigated to ${validatedParams.url}`,
+        text: `Navigated to ${validatedParams.url}${validatedParams.headless ? ' in headless mode' : ''}`,
       }],
     };
   },
