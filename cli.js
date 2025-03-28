@@ -15,4 +15,22 @@
  * limitations under the License.
  */
 
+// Check if the lib directory exists, if not, build it
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+
+const libDir = path.join(__dirname, 'lib');
+
+if (!fs.existsSync(libDir) || !fs.existsSync(path.join(libDir, 'program.js'))) {
+  console.log('Building TypeScript files...');
+  try {
+    execSync('npm install && npm run build', { stdio: 'inherit', cwd: __dirname });
+    console.log('Build complete.');
+  } catch (error) {
+    console.error('Error building project:', error);
+    process.exit(1);
+  }
+}
+
 require('./lib/program');
