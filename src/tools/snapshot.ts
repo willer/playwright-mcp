@@ -25,7 +25,7 @@ import type { Tool } from './tool';
 export const snapshot: Tool = {
   schema: {
     name: 'browser_snapshot',
-    description: 'Capture accessibility snapshot of the current page, this is better than screenshot',
+    description: 'Capture accessibility snapshot of the current page. Use when taking direct control of the browser if agent_start is not suitable for the task.',
     inputSchema: zodToJsonSchema(z.object({})),
   },
 
@@ -139,7 +139,7 @@ const screenshotSchema = z.object({
 export const screenshot: Tool = {
   schema: {
     name: 'browser_take_screenshot',
-    description: `Take a screenshot of the current page. You can't perform actions based on the screenshot, use browser_snapshot for actions.`,
+    description: `Take a screenshot of the current page. EXPENSIVE: Use only when verifying layouts or as a last resort when other approaches fail. Costs many tokens due to image size. Use browser_snapshot for actions, not this.`,
     inputSchema: zodToJsonSchema(screenshotSchema),
   },
 
