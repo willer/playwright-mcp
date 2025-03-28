@@ -78,13 +78,13 @@ export async function runAndWait(context: Context, status: string, callback: () 
   await waitForCompletion(page, () => callback());
   if (dismissFileChooser)
     context.clearFileChooser();
-    
+
   if (!snapshot) {
     return {
       content: [{ type: 'text' as const, text: status }],
     };
   }
-  
+
   return await captureAriaSnapshot(context, status, includeScreenshot);
 }
 
@@ -107,12 +107,12 @@ export async function captureAriaSnapshot(context: Context, status: string = '',
       '```',
       ''
   );
-  
+
   const content: (ImageContent | TextContent)[] = [{
-    type: 'text' as const, 
+    type: 'text' as const,
     text: lines.join('\n')
   }];
-  
+
   // Optionally capture screenshot
   if (includeScreenshot) {
     const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
@@ -122,6 +122,6 @@ export async function captureAriaSnapshot(context: Context, status: string = '',
       mimeType: 'image/jpeg'
     });
   }
-  
+
   return { content };
 }

@@ -79,8 +79,10 @@ export function createServerWithTools(options: Options): Server {
     return { contents };
   });
 
+  const oldClose = server.close.bind(server);
+
   server.close = async () => {
-    await server.close();
+    await oldClose();
     await context.close();
   };
 

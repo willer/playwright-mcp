@@ -34,10 +34,10 @@ export const consoleMessages: Tool = {
   handle: async (context, params) => {
     const validatedParams = consoleSchema.parse(params);
     const messages = await context.console();
-    
+
     // Format messages for better readability
     let consoleText = 'Console Messages:\n';
-    
+
     if (messages.length === 0) {
       consoleText += '[No console messages]';
     } else {
@@ -46,21 +46,21 @@ export const consoleMessages: Tool = {
         const type = message.type().toUpperCase();
         const text = message.text();
         const location = message.location().url ? ` (${message.location().url}:${message.location().lineNumber})` : '';
-        
+
         return `[${index + 1}] [${timestamp}] [${type}]${location}: ${text}`;
       }).join('\n');
     }
-    
+
     const content: TextContent[] = [{
       type: 'text' as const,
       text: consoleText,
     }];
-    
+
     // Optionally clear the console
-    if (validatedParams.clear) {
+    if (validatedParams.clear)
       await context.clearConsole();
-    }
-    
+
+
     return { content };
   },
 };

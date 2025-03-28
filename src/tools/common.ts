@@ -37,8 +37,8 @@ export const navigate: ToolFactory = snapshot => ({
   },
   handle: async (context, params) => {
     const validatedParams = navigateSchema.parse(params);
-    const page = await context.createPage({ 
-      headless: validatedParams.headless 
+    const page = await context.createPage({
+      headless: validatedParams.headless
     });
     await page.goto(validatedParams.url, { waitUntil: 'domcontentloaded' });
     // Cap load event to 5 seconds, the page is operational at this point.

@@ -19,9 +19,7 @@ import zodToJsonSchema from 'zod-to-json-schema';
 
 import { captureAriaSnapshot, runAndWait } from './utils';
 
-import type * as playwright from 'playwright';
 import type { Tool } from './tool';
-import type { ImageContent, TextContent } from '@modelcontextprotocol/sdk/types';
 
 const snapshotSchema = z.object({
   includeScreenshot: z.boolean().optional().describe('Include a screenshot along with the accessibility snapshot'),

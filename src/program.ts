@@ -35,12 +35,12 @@ const hasHeadless = rawArgs.includes('headless');
 const hasVision = rawArgs.includes('vision');
 
 // Remove raw arguments so commander doesn't complain
-if (hasHeadless) {
+if (hasHeadless)
   process.argv = process.argv.filter(arg => arg !== 'headless');
-}
-if (hasVision) {
+
+if (hasVision)
   process.argv = process.argv.filter(arg => arg !== 'vision');
-}
+
 
 program
     .version('Version ' + packageJSON.version)
@@ -65,9 +65,9 @@ program
       setupExitWatchdog(server);
 
       // SSE transport is not available in the current version
-      if (options.port) {
+      if (options.port)
         console.warn('SSE transport is not available in the current version, using StdioServerTransport instead.');
-      }
+
       const transport = new StdioServerTransport();
       await server.connect(transport);
     });
