@@ -25,6 +25,13 @@ const libDir = path.join(__dirname, 'lib');
 if (!fs.existsSync(libDir) || !fs.existsSync(path.join(libDir, 'program.js'))) {
   console.log('Building TypeScript files...');
   try {
+    // When running via npx from GitHub, the project should already be built
+    if (process.env.npm_lifecycle_event === 'npx') {
+      console.error('Error: The lib directory is missing. This package must be pre-built when run via npx.');
+      process.exit(1);
+    }
+    
+    // Otherwise try to build it locally
     execSync('npm install && npm run build', { stdio: 'inherit', cwd: __dirname });
     console.log('Build complete.');
   } catch (error) {
