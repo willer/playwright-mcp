@@ -36,6 +36,7 @@ test('test tool list', async ({ client, visionClient }) => {
     'browser_wait',
     'browser_save_as_pdf',
     'browser_close',
+    'browser_console',
   ]);
 
   const { tools: visionTools } = await visionClient.listTools();
@@ -53,17 +54,13 @@ test('test tool list', async ({ client, visionClient }) => {
     'browser_wait',
     'browser_save_as_pdf',
     'browser_close',
+    'browser_console',
   ]);
 });
 
 test('test resources list', async ({ client }) => {
   const { resources } = await client.listResources();
-  expect(resources).toEqual([
-    expect.objectContaining({
-      uri: 'browser://console',
-      mimeType: 'text/plain',
-    }),
-  ]);
+  expect(resources).toEqual([]);
 });
 
 test('test browser_navigate', async ({ client }) => {
@@ -195,7 +192,7 @@ test('multiple option', async ({ client }) => {
 `);
 });
 
-test('browser://console', async ({ client }) => {
+test('browser_console', async ({ client }) => {
   await client.callTool({
     name: 'browser_navigate',
     arguments: {
@@ -203,12 +200,12 @@ test('browser://console', async ({ client }) => {
     },
   });
 
-  const resource = await client.readResource({
-    uri: 'browser://console',
+  const result = await client.callTool({
+    name: 'browser_console',
+    arguments: {},
   });
-  expect(resource.contents).toEqual([{
-    uri: 'browser://console',
-    mimeType: 'text/plain',
+  expect(result.content).toEqual([{
+    type: 'text',
     text: '[LOG] Hello, world!\n[ERROR] Error',
   }]);
 });
