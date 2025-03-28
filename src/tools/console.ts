@@ -23,12 +23,18 @@ export const console: Tool = {
   schema: {
     name: 'browser_console',
     description: 'View the page console messages',
-    inputSchema: zodToJsonSchema(z.object({})),
+    inputSchema: zodToJsonSchema(z.object({
+      errorsOnly: z.boolean().optional().describe('Only show error messages')
+    })),
   },
 
   handle: async context => {
     const messages = await context.console();
-    const log = messages.map(message => `[${message.type().toUpperCase()}] ${message.text()}`).join('\n');
+    const filteredMessages = context.input.errorsOnly 
+      ? messages.filter(message => message.type() === 'error')
+      : messages;
+    
+    const log = filteredMessages.map(message => `[${message.type().toUpperCase()}] ${message.text()}`).join('\n');
     return {
       content: [{ type: 'text', text: log }],
     };
