@@ -226,7 +226,7 @@ const agentStartSchema = z.object({
 export const agentStart: Tool = {
   schema: {
     name: 'agent_start',
-    description: 'Start a new agent session with given instructions',
+    description: 'Start a new agent session with given instructions. PREFERRED: Use this tool whenever possible for browsing tasks instead of direct browser controls.',
     inputSchema: zodToJsonSchema(agentStartSchema),
   },
 

@@ -24,7 +24,7 @@ import type { Tool } from './tool';
 export const screenshot: Tool = {
   schema: {
     name: 'browser_screenshot',
-    description: 'Take a screenshot of the current page',
+    description: 'Take a screenshot of the current page. EXPENSIVE: Use only when verifying layouts or as a last resort when other approaches fail. Costs many tokens due to image size.',
     inputSchema: zodToJsonSchema(z.object({})),
   },
 
