@@ -18,7 +18,7 @@ import { createServerWithTools } from './server';
 import * as snapshot from './tools/snapshot';
 import * as common from './tools/common';
 import * as screenshot from './tools/screenshot';
-import { console } from './resources/console';
+import { console } from './tools/console';
 
 import type { Tool } from './tools/tool';
 import type { Resource } from './resources/resource';
@@ -30,6 +30,7 @@ const commonTools: Tool[] = [
   common.wait,
   common.pdf,
   common.close,
+  console,
 ];
 
 const snapshotTools: Tool[] = [
@@ -59,9 +60,7 @@ const screenshotTools: Tool[] = [
   ...commonTools,
 ];
 
-const resources: Resource[] = [
-  console,
-];
+const resources: Resource[] = [];
 
 type Options = {
   userDataDir?: string;
