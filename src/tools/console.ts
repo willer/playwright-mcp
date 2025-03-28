@@ -28,9 +28,9 @@ export const console: Tool = {
     })),
   },
 
-  handle: async context => {
+  handle: async (context, params) => {
     const messages = await context.console();
-    const filteredMessages = context.input.errorsOnly 
+    const filteredMessages = params?.errorsOnly 
       ? messages.filter(message => message.type() === 'error')
       : messages;
     
