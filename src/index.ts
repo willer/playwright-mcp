@@ -18,6 +18,7 @@ import { createServerWithTools } from './server';
 import * as snapshot from './tools/snapshot';
 import * as common from './tools/common';
 import * as screenshot from './tools/screenshot';
+import * as cua from './tools/cua';
 import { console } from './tools/console';
 
 import type { Tool } from './tools/tool';
@@ -31,6 +32,13 @@ const commonTools: Tool[] = [
   common.pdf,
   common.close,
   console,
+];
+
+const cuaTools: Tool[] = [
+  cua.agentStart,
+  cua.agentStatus,
+  cua.agentLog,
+  cua.agentEnd,
 ];
 
 const snapshotTools: Tool[] = [
@@ -71,7 +79,10 @@ type Options = {
 const packageJSON = require('../package.json');
 
 export function createServer(options?: Options): Server {
-  const tools = options?.vision ? screenshotTools : snapshotTools;
+  const baseTools = options?.vision ? screenshotTools : snapshotTools;
+  // Always include the CUA tools
+  const tools = [...baseTools, ...cuaTools];
+  
   return createServerWithTools({
     name: 'Playwright',
     version: packageJSON.version,
