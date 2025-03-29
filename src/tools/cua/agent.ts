@@ -219,7 +219,6 @@ Think step by step about how to accomplish the user's goal. Analyze the screensh
 // Agent start schema
 const agentStartSchema = z.object({
   instructions: z.string().describe('Instructions for the agent to follow'),
-  apiKey: z.string().describe('OpenAI API key for the agent'),
 });
 
 // Agent implementation
@@ -232,6 +231,15 @@ export const agentStart: Tool = {
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentStartSchema.parse(params);
+    
+    // Check for API key in environment
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ error: 'No OpenAI API key found in environment (OPENAI_API_KEY)' }) }],
+        isError: true,
+      };
+    }
     
     // Create a new session
     const sessionId = uuidv4();
@@ -249,7 +257,7 @@ export const agentStart: Tool = {
     logToSession(sessionId, 'Agent session started', 'text');
     
     // Start the agent execution in the background
-    setTimeout(() => executeAgent(context, sessionId, validatedParams.apiKey), 0);
+    setTimeout(() => executeAgent(context, sessionId, apiKey), 0);
     
     return {
       content: [{ 

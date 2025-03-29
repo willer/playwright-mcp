@@ -37,6 +37,10 @@ test('test tool list', async ({ client, visionClient }) => {
     'browser_save_as_pdf',
     'browser_close',
     'browser_console',
+    'agent_start',
+    'agent_status',
+    'agent_log',
+    'agent_end',
   ]);
 
   const { tools: visionTools } = await visionClient.listTools();
@@ -55,6 +59,10 @@ test('test tool list', async ({ client, visionClient }) => {
     'browser_save_as_pdf',
     'browser_close',
     'browser_console',
+    'agent_start',
+    'agent_status',
+    'agent_log',
+    'agent_end',
   ]);
 });
 
