@@ -22,6 +22,7 @@
     "lint:tests": "eslint \"tests/**/*.ts\" --rule \"robust/test-quality:2\"",
     "watch": "tsc --watch",
     "test": "playwright test",
+    "test:quality": "playwright test tests/claude-quality-check.spec.ts",
     "clean": "rm -rf lib",
     "prepare": "npm run build",
     "install-hooks": "cp utils/pre-commit.js .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit",

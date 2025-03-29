@@ -52,10 +52,9 @@ const sessions = new Map<string, SessionData>();
 // Log a message to the specified session with optional content
 function logToSession(sessionId: string, message: string, contentType: 'text' | 'image' = 'text', content: string = ''): void {
   const session = sessions.get(sessionId);
-  if (!session)
+  if (!session) {
     throw new Error(`Session ${sessionId} not found`);
-
-
+  }
   session.logs.push({
     timestamp: new Date().toISOString(),
     message,
@@ -64,15 +63,15 @@ function logToSession(sessionId: string, message: string, contentType: 'text' | 
   });
 }
 
-// OpenAI API client for the Computer Use Agent interactions
-class OpenAIClient {
+// OpenAI Computer Use Agent client
+class ComputerUseAgent {
   private apiKey: string;
 
   constructor(apiKey: string) {
     this.apiKey = apiKey;
   }
 
-  async createOpenAIRequest(payload: any): Promise<any> {
+  async callOpenAIAPI(payload: any): Promise<any> {
     return new Promise((resolve, reject) => {
       const data = JSON.stringify(payload);
 
@@ -96,6 +95,10 @@ class OpenAIClient {
         res.on('end', () => {
           try {
             const parsedData = JSON.parse(responseData);
+            if (parsedData.error) {
+              reject(new Error(`OpenAI API error: ${parsedData.error.message}`));
+              return;
+            }
             resolve(parsedData);
           } catch (e: any) {
             console.error('Error parsing OpenAI response:', e);
@@ -105,7 +108,8 @@ class OpenAIClient {
       });
 
       req.on('error', (e: Error) => {
-        reject(new Error(`Request failed: ${e.message}`));
+        console.error('OpenAI API request error:', e);
+        reject(new Error(`API request failed: ${e.message}`));
       });
 
       req.write(data);
@@ -113,431 +117,186 @@ class OpenAIClient {
     });
   }
 
-  // Process computer tasks using OpenAI vision model
+  /**
+   * Run the Computer Use Agent with the given instructions
+   */
   async runComputerAgent(sessionId: string, computer: PlaywrightComputer, instructions: string): Promise<void> {
-    logToSession(sessionId, `Processing instructions with AI: ${instructions}`, 'text');
-
-    // Get initial screenshot
+    logToSession(sessionId, `Processing instructions with Computer Use Agent: ${instructions}`, 'text');
+    
+    // Get initial screenshot for the Computer Use Agent
     const screenshot = await computer.screenshot();
     logToSession(sessionId, 'Captured initial screenshot', 'image', screenshot);
-
-    // Create the initial message for the AI
-    const systemPrompt = `You are a browser automation agent that executes computer commands exactly as specified. 
-
-IMPORTANT: You MUST provide your commands in a code block format that can be executed directly.
-
-Available commands:
-- screenshot() - Take a screenshot of the current browser window
-- click(x, y) - Click at coordinates (x, y) where x and y MUST be specific pixel numbers (e.g., click(350, 200))
-- type("text") - Type the given text, text MUST be in quotes
-- press("key") - Press a keyboard key (e.g., "Enter", "ArrowDown"), key MUST be in quotes 
-- wait(ms) - Wait for the specified number of milliseconds (e.g., wait(2000) for 2 seconds)
-- navigate("url") - Navigate to the specified URL, url MUST be in quotes and include https://
-
-REQUIRED FORMAT: 
-\`\`\`
-navigate("https://example.com")
-wait(1000)
-type("search query")
-press("Enter")
-wait(2000)
-click(250, 300)
-\`\`\`
-
-If you don't know specific pixel coordinates, use click(x, y) as a placeholder. The system will analyze the screen and determine coordinates for you.
-
-For best results:
-1. Always use full URLs with https://
-2. Include wait() commands between actions to ensure pages load
-3. Be precise about what text to type and what keys to press
-4. Put each command on its own line inside a single code block
-
-This task will be executed exactly as you specify, with no human intervention. Your code block must be complete and executable.`;
-
-    // Add instructions clarification - repetition helps improve performance
-    const userPrompt = `I need you to help me with the following task in a web browser:
-
-${instructions}
-
-REMEMBER: You MUST format your response with the commands in a code block using triple backticks:
-\`\`\`
-navigate("https://example.com")
-wait(1000)
-click(x, y)  
-\`\`\`
-
-If you don't know coordinates for a click, use click(x, y) as a placeholder and I'll analyze the screen to determine them.
-
-Please provide ONLY the commands needed to complete this task, formatted properly in a code block.`;
+    
+    // Get session for tracking
+    const sessionData = sessions.get(sessionId);
+    if (!sessionData) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
 
     try {
-      const response = await this.createOpenAIRequest({
-        model: 'gpt-4o',
+      // Set up browser capabilities
+      const browserInfo = await computer.getBrowserCapabilities();
+      
+      // Create the payload for the Computer Use Agent
+      const payload = {
+        model: 'computer-use-preview',
         messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: [
-            { type: 'text', text: userPrompt },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshot}` } }
-          ] }
+          { 
+            role: 'system', 
+            content: 'You are a helpful computer control assistant that helps users with browser tasks.'
+          },
+          { 
+            role: 'user', 
+            content: instructions
+          }
         ],
-        max_tokens: 2000
-      });
-
-      logToSession(sessionId, 'Received AI response', 'text');
-
-      if (response.choices && response.choices.length > 0) {
-        const agentResponse = response.choices[0].message.content;
-        logToSession(sessionId, `Agent's plan: ${agentResponse}`, 'text');
-
-        // Execute the plan by parsing the response and performing actions
-        await this.executeActions(sessionId, computer, agentResponse);
-      } else {
-        throw new Error('No response from the OpenAI API');
-      }
-    } catch (error: any) {
-      logToSession(sessionId, `Error in AI processing: ${error.message}`, 'text');
-      throw error;
-    }
-  }
-
-  // Execute the actions described by the AI
-  async executeActions(sessionId: string, computer: PlaywrightComputer, agentResponse: string): Promise<void> {
-    // Parse the response to identify actions
-    const lines = agentResponse.split('\n');
-    const actionableLines: string[] = [];
-
-    // Check if there are code blocks in the response
-    const codeBlocks: string[] = [];
-    let inCodeBlock = false;
-    let currentCodeBlock = '';
-
-    // Extract code blocks first
-    for (const line of lines) {
-      if (line.trim().startsWith('```') && !inCodeBlock) {
-        inCodeBlock = true;
-        currentCodeBlock = '';
-      } else if (line.trim().startsWith('```') && inCodeBlock) {
-        inCodeBlock = false;
-        codeBlocks.push(currentCodeBlock);
-      } else if (inCodeBlock) {
-        currentCodeBlock += line + '\n';
-      }
-    }
-
-    logToSession(sessionId, `Found ${codeBlocks.length} code blocks in response`, 'text');
-
-    // Process code blocks first if they exist
-    if (codeBlocks.length > 0) {
-      for (const block of codeBlocks) {
-        const blockLines = block.split('\n');
-        for (const line of blockLines) {
-          const trimmedLine = line.trim();
-          if (trimmedLine && !trimmedLine.startsWith('//') && !trimmedLine.startsWith('#')) {
-            if (
-              trimmedLine.includes('screenshot()') ||
-              trimmedLine.match(/click\(\s*\d+\s*,\s*\d+\s*\)/) ||
-              trimmedLine.match(/click\(\s*[a-zA-Z]+\s*,\s*[a-zA-Z]+\s*\)/) ||
-              trimmedLine.match(/type\(['"](.*)['"]\)/) ||
-              trimmedLine.match(/press\(['"](.*)['"]\)/) ||
-              trimmedLine.match(/wait\(\s*\d+\s*\)/) ||
-              trimmedLine.match(/navigate\(['"](.*)['"]/)
-            ) {
-              actionableLines.push(trimmedLine);
-            } else if (
-              // More permissive patterns as fallbacks
-              trimmedLine.toLowerCase().includes('navigate') ||
-              trimmedLine.toLowerCase().includes('click') ||
-              trimmedLine.toLowerCase().includes('type') ||
-              trimmedLine.toLowerCase().includes('press') ||
-              trimmedLine.toLowerCase().includes('wait') ||
-              trimmedLine.toLowerCase().includes('screenshot')
-            ) {
-              // Try to convert to actionable format
-              if (trimmedLine.toLowerCase().includes('navigate')) {
-                const urlMatch = trimmedLine.match(/(['"])(.*?)\1/);
-                if (urlMatch && urlMatch[2])
-                  actionableLines.push(`navigate("${urlMatch[2]}")`);
-                else
-                  actionableLines.push(`navigate("https://example.com")`);
-
-              } else if (trimmedLine.toLowerCase().includes('click')) {
-                actionableLines.push('click(x, y)');
-              } else if (trimmedLine.toLowerCase().includes('type')) {
-                const textMatch = trimmedLine.match(/(['"])(.*?)\1/);
-                if (textMatch && textMatch[2])
-                  actionableLines.push(`type("${textMatch[2]}")`);
-
-              } else if (trimmedLine.toLowerCase().includes('press')) {
-                const keyMatch = trimmedLine.match(/(['"])(.*?)\1/);
-                if (keyMatch && keyMatch[2])
-                  actionableLines.push(`press("${keyMatch[2]}")`);
-                else if (trimmedLine.toLowerCase().includes('enter'))
-                  actionableLines.push(`press("Enter")`);
-
-              } else if (trimmedLine.toLowerCase().includes('wait')) {
-                const timeMatch = trimmedLine.match(/\d+/);
-                if (timeMatch && timeMatch[0])
-                  actionableLines.push(`wait(${timeMatch[0]})`);
-                else
-                  actionableLines.push('wait(2000)');
-
-              } else if (trimmedLine.toLowerCase().includes('screenshot')) {
-                actionableLines.push('screenshot()');
+        tools: [
+          {
+            type: 'computer',
+            computer: {
+              type: 'browser',
+              screen: {
+                width: browserInfo.width,
+                height: browserInfo.height
               }
             }
           }
+        ],
+        tool_choice: { type: 'computer' }
+      };
+      
+      logToSession(sessionId, 'Sending request to Computer Use Agent API', 'text');
+      
+      // Initialize variables to track our progress
+      let toolExecutionComplete = false;
+      let lastResponseMessage = null;
+      let continuationToken = null;
+      sessionData.stepsTotal = 0;  // Will be updated as we get actions
+      sessionData.stepsCompleted = 0;
+      
+      // Loop until the agent completes the task or we encounter an error
+      while (!toolExecutionComplete) {
+        // If we have a continuation token, add it to the request
+        const requestPayload = {...payload};
+        if (continuationToken) {
+          requestPayload.tool_continuation = {
+            prompt_index: 0,
+            tool_index: 0,
+            continuation_token: continuationToken
+          };
         }
-      }
-    }
-
-    // If no actionable lines were found in code blocks, try to find them in the regular text
-    if (actionableLines.length === 0) {
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        if (
-          trimmedLine.includes('screenshot()') ||
-          trimmedLine.match(/click\(\s*\d+\s*,\s*\d+\s*\)/) ||
-          trimmedLine.match(/click\(\s*[a-zA-Z]+\s*,\s*[a-zA-Z]+\s*\)/) ||
-          trimmedLine.match(/type\(['"](.*)['"]\)/) ||
-          trimmedLine.match(/press\(['"](.*)['"]\)/) ||
-          trimmedLine.match(/wait\(\s*\d+\s*\)/) ||
-          trimmedLine.match(/navigate\(['"](.*)['"]/)
-        )
-          actionableLines.push(trimmedLine);
-
-      }
-    }
-
-    // If we still have no actions, try to infer a basic plan from the session's instructions
-    if (actionableLines.length === 0) {
-      logToSession(sessionId, 'No actionable commands found in response. Creating fallback plan.', 'text');
-
-      // Get the session so we can access the instructions
-      const session = sessions.get(sessionId);
-      if (!session)
-        throw new Error(`Session ${sessionId} not found`);
-
-
-      // Log error message without any fallback actions
-      console.error(`No actionable commands found for session ${sessionId}`);
-
-      // If we couldn't extract actionable commands and have no fallback options,
-      // log an error and don't add any actions - the agent will terminate
-
-      logToSession(sessionId, 'No actionable commands found in response. Unable to execute task.', 'text');
-      logToSession(sessionId, 'AI response was not in the required format to complete the task.', 'text');
-
-      // Do not create fallback plans - if no actionable commands were found, we'll fail cleanly
-    }
-
-    // Log what we found and update step count for progress tracking
-    logToSession(sessionId, `Found ${actionableLines.length} actionable commands in the plan`, 'text');
-    if (actionableLines.length > 0) {
-      logToSession(sessionId, `Actions to execute: ${actionableLines.join(', ')}`, 'text');
-
-      // Update session step count for progress tracking
-      const session = sessions.get(sessionId);
-      if (session) {
-        session.stepsTotal = actionableLines.length;
-        session.stepsCompleted = 0;
-      }
-    }
-
-    // Get session for updating progress and coordinate determination
-    const sessionData = sessions.get(sessionId);
-    if (!sessionData)
-      throw new Error(`Session ${sessionId} not found`);
-
-
-    // Use a second round of AI to determine actual coordinates when placeholders exist
-    // Track lines requiring coordinate determination
-    const clickLines: string[] = [];
-    const needsCoordinateDetermination = actionableLines.some(line => {
-      const isClickPlaceholder =
-        line.includes('click(x, y)') ||
-        line.includes('click(X, Y)') ||
-        line.match(/click\(\s*[a-zA-Z]+\s*,\s*[a-zA-Z]+\s*\)/) ||
-        (line.toLowerCase().includes('click') && !line.match(/click\(\s*\d+\s*,\s*\d+\s*\)/));
-
-      if (isClickPlaceholder)
-        clickLines.push(line);
-
-      return isClickPlaceholder;
-    });
-
-    if (needsCoordinateDetermination) {
-      logToSession(sessionId, 'Found click command with placeholder coordinates. Taking screenshot for analysis.', 'text');
-      const screenshot = await computer.screenshot();
-      logToSession(sessionId, 'Screenshot taken for coordinate analysis', 'image', screenshot);
-
-      // Create a prompt for the AI to analyze the screenshot and determine coordinates
-      logToSession(sessionId, 'Requesting AI to analyze screenshot and determine click coordinates', 'text');
-
-      try {
-        // Get current URL to provide context
-        const currentUrl = await computer.getCurrentUrl();
-
-        // Create a special coordinate determination prompt
-        const coordinatePrompt = `
-You are now analyzing a screenshot of a webpage at URL: ${currentUrl}
-
-The current task is: ${sessionData.instructions}
-
-The plan includes one or more click operations that need exact coordinates:
-${clickLines.join('\n')}
-
-Based on the screenshot, determine the exact X,Y coordinates for each click operation.
-For each placeholder click(x, y), provide a replacement with specific pixel coordinates.
-
-For example, if the plan says:
-- click(x, y) # Click on search box
-- click(x, y) # Click on a search result
-
-Your response should be:
-click(255, 155)
-click(300, 380)
-
-IMPORTANT INSTRUCTIONS:
-1. Return ONLY the click command(s) with specific coordinates, one per line
-2. Use numbers between 100-800 for X and 100-600 for Y to ensure they're on screen
-3. DO NOT include any explanation or commentary
-4. If multiple clicks are needed, provide coordinates for all of them
-
-Just provide click commands with coordinates, NOTHING ELSE.
-`;
-
-        // Send the prompt to the API with the screenshot
-        const response = await this.createOpenAIRequest({
-          model: 'gpt-4o',
-          messages: [
-            { role: 'system', content: 'You are a computer vision assistant that determines precise pixel coordinates for clicking elements on a webpage.' },
-            { role: 'user', content: [
-              { type: 'text', text: coordinatePrompt },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshot}` } }
-            ] }
-          ],
-          max_tokens: 100
-        });
-
-        if (response.choices && response.choices.length > 0) {
-          const coordinateResponse = response.choices[0].message.content.trim();
-          logToSession(sessionId, `AI determined coordinates: ${coordinateResponse}`, 'text');
-
-          // Process the coordinate response and update actionableLines
-          logToSession(sessionId, `Processing coordinate response: ${coordinateResponse}`, 'text');
-
-          // The response might contain multiple click commands, one per line
-          const clickCommands = coordinateResponse.split('\n').filter((line: string) => line.trim() !== '');
-
-          if (clickCommands.length > 0) {
-            // Replace placeholders with actual coordinates
-            let clickCommandIndex = 0;
-            for (let i = 0; i < actionableLines.length; i++) {
-              if (actionableLines[i].includes('click(x, y)') ||
-                  actionableLines[i].includes('click(X, Y)') ||
-                  actionableLines[i].match(/click\(\s*[a-zA-Z]+\s*,\s*[a-zA-Z]+\s*\)/) ||
-                  (actionableLines[i].toLowerCase().includes('click') && !actionableLines[i].match(/click\(\s*\d+\s*,\s*\d+\s*\)/))) {
-
-                if (clickCommandIndex < clickCommands.length) {
-                  actionableLines[i] = clickCommands[clickCommandIndex];
-                  clickCommandIndex++;
-                  logToSession(sessionId, `Updated click command: ${actionableLines[i]}`, 'text');
+        
+        // Send the request to the OpenAI API
+        const response = await this.callOpenAIAPI(requestPayload);
+        
+        if (!response.choices || response.choices.length === 0) {
+          throw new Error('No response choices from the Computer Use Agent API');
+        }
+        
+        const choice = response.choices[0];
+        lastResponseMessage = choice.message;
+        
+        // Check if there's a tool call in the response
+        if (lastResponseMessage.tool_calls && lastResponseMessage.tool_calls.length > 0) {
+          const toolCall = lastResponseMessage.tool_calls[0];
+          
+          // Execute computer actions based on the tool call
+          if (toolCall.type === 'computer') {
+            const computerActions = toolCall.computer.actions;
+            
+            if (computerActions && computerActions.length > 0) {
+              // Update step count for progress tracking
+              sessionData.stepsTotal += computerActions.length;
+              
+              // Log the actions we're about to execute
+              logToSession(sessionId, `Received ${computerActions.length} actions from Computer Use Agent`, 'text');
+              
+              // Perform each action
+              for (const action of computerActions) {
+                // Update the current action in the session
+                sessionData.currentAction = JSON.stringify(action);
+                logToSession(sessionId, `Executing action: ${sessionData.currentAction}`, 'text');
+                
+                try {
+                  // Execute the action based on its type
+                  switch (action.type) {
+                    case 'click':
+                      await computer.click(action.coordinates.x, action.coordinates.y);
+                      break;
+                    case 'type':
+                      await computer.type(action.text);
+                      break;
+                    case 'keypress':
+                      await computer.press(action.key);
+                      break;
+                    case 'navigate':
+                      await computer.navigate(action.url);
+                      break;
+                    case 'scroll':
+                      await computer.scroll(
+                        action.coordinates.x, 
+                        action.coordinates.y, 
+                        action.delta_x || 0, 
+                        action.delta_y || 0
+                      );
+                      break;
+                    default:
+                      logToSession(sessionId, `Unsupported action type: ${action.type}`, 'text');
+                      continue;
+                  }
+                  
+                  // Take a screenshot after each action to show progress
+                  const actionScreenshot = await computer.screenshot();
+                  logToSession(sessionId, `Screenshot after ${action.type} action`, 'image', actionScreenshot);
+                  
+                  // Update progress
+                  sessionData.stepsCompleted++;
+                  
+                } catch (actionError: any) {
+                  logToSession(sessionId, `Error executing action: ${actionError.message}`, 'text');
+                  console.error(`Error executing action ${action.type}:`, actionError);
+                  throw actionError;
                 }
               }
+              
+              // Check if we need to continue or if we're done
+              if (toolCall.computer.continuation_token) {
+                continuationToken = toolCall.computer.continuation_token;
+                logToSession(sessionId, 'More actions pending, continuing execution', 'text');
+              } else {
+                toolExecutionComplete = true;
+                logToSession(sessionId, 'All actions completed successfully', 'text');
+              }
+            } else {
+              // No actions were provided, so we're done
+              toolExecutionComplete = true;
+              logToSession(sessionId, 'Computer Use Agent completed (no actions)', 'text');
             }
           } else {
-            // Fallback to fixed coordinates if response parsing fails
-            for (let i = 0; i < actionableLines.length; i++) {
-              if (actionableLines[i].includes('click(x, y)') ||
-                  actionableLines[i].includes('click(X, Y)') ||
-                  actionableLines[i].match(/click\(\s*[a-zA-Z]+\s*,\s*[a-zA-Z]+\s*\)/) ||
-                  (actionableLines[i].toLowerCase().includes('click') && !actionableLines[i].match(/click\(\s*\d+\s*,\s*\d+\s*\)/))) {
-
-                // Use fallback coordinates for different purposes
-                if (actionableLines[i].toLowerCase().includes('search'))
-                  actionableLines[i] = 'click(300, 200)'; // Typical search box location
-                else
-                  actionableLines[i] = 'click(400, 350)'; // Typical search result location
-
-                logToSession(sessionId, `Using fallback coordinates: ${actionableLines[i]}`, 'text');
-              }
-            }
+            throw new Error(`Unexpected tool call type: ${toolCall.type}`);
           }
         } else {
-          throw new Error('No response from the OpenAI API for coordinate determination');
-        }
-      } catch (error: any) {
-        logToSession(sessionId, `Error determining coordinates: ${error.message}`, 'text');
-        throw error;
-      }
-    }
-
-    // We already have the session data from earlier
-
-    // If we have no actionable commands, set error state and exit
-    if (actionableLines.length === 0) {
-      sessionData.status = 'error';
-      sessionData.error = 'No actionable commands could be parsed from the AI response';
-      sessionData.endTime = Date.now();
-      return;
-    }
-
-    // Execute each actionable command
-    for (let i = 0; i < actionableLines.length; i++) {
-      const line = actionableLines[i];
-
-      // Update current action in session
-      sessionData.currentAction = line;
-
-      // Execute different commands based on pattern matching
-      if (line.includes('screenshot()')) {
-        logToSession(sessionId, 'Taking screenshot', 'text');
-        const screenshot = await computer.screenshot();
-        logToSession(sessionId, 'Screenshot taken', 'image', screenshot);
-      } else if (line.match(/click\(\s*\d+\s*,\s*\d+\s*\)/)) {
-        const match = line.match(/click\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
-        if (match) {
-          const x = parseInt(match[1], 10);
-          const y = parseInt(match[2], 10);
-          logToSession(sessionId, `Clicking at (${x}, ${y})`, 'text');
-          await computer.click(x, y);
-        }
-      } else if (line.match(/type\(['"](.*)['"]\)/)) {
-        const match = line.match(/type\(['"](.*)['"](?:,\s*(\d+))?\)/);
-        if (match) {
-          const text = match[1];
-          logToSession(sessionId, `Typing text: ${text}`, 'text');
-          await computer.type(text);
-        }
-      } else if (line.match(/press\(['"](.*)['"]\)/)) {
-        const match = line.match(/press\(['"](.*)['"](?:,\s*(\d+))?\)/);
-        if (match) {
-          const key = match[1];
-          logToSession(sessionId, `Pressing key: ${key}`, 'text');
-          await computer.press(key);
-        }
-      } else if (line.match(/wait\(\s*\d+\s*\)/)) {
-        const match = line.match(/wait\(\s*(\d+)\s*\)/);
-        if (match) {
-          const ms = parseInt(match[1], 10);
-          logToSession(sessionId, `Waiting for ${ms}ms`, 'text');
-          await computer.wait(ms);
-        }
-      } else if (line.match(/navigate\(['"](.*)['"](?:,\s*(\d+))?\)/)) {
-        const match = line.match(/navigate\(['"](.*)['"](?:,\s*(\d+))?\)/);
-        if (match) {
-          const url = match[1];
-          logToSession(sessionId, `Navigating to: ${url}`, 'text');
-          await computer.navigate(url);
+          // No tool calls in the response, so we're done
+          toolExecutionComplete = true;
+          
+          // If there's content in the message, log it
+          if (lastResponseMessage.content) {
+            logToSession(sessionId, `Computer Use Agent message: ${lastResponseMessage.content}`, 'text');
+          } else {
+            logToSession(sessionId, 'Computer Use Agent completed (no message)', 'text');
+          }
         }
       }
-
-      // Capture screenshot after each step to show progress
-      const screenshot = await computer.screenshot();
-      logToSession(sessionId, 'Screenshot after action', 'image', screenshot);
-
-      // Update progress in session
-      sessionData.stepsCompleted = i + 1;
+      
+      // Log the final result
+      if (lastResponseMessage && lastResponseMessage.content) {
+        logToSession(sessionId, `Final message from Computer Use Agent: ${lastResponseMessage.content}`, 'text');
+      }
+      
+    } catch (error: any) {
+      console.error(`Computer Use Agent error for session ${sessionId}:`, error);
+      logToSession(sessionId, `Error in Computer Use Agent: ${error.message}`, 'text');
+      throw error;
     }
   }
 }
@@ -694,16 +453,16 @@ export const agentLog: Tool = {
 
     for (const log of session.logs) {
       // Only add text entries, skip images entirely
-      if (log.contentType === 'text')
+      if (log.contentType === 'text') {
         content.push({ type: 'text' as const, text: `[${log.timestamp}] ${log.message}` });
-
+      }
     }
 
     // Add summary at the end
     let progress = 0;
-    if (session.stepsTotal && session.stepsTotal > 0)
+    if (session.stepsTotal && session.stepsTotal > 0) {
       progress = Math.floor((session.stepsCompleted || 0) / session.stepsTotal * 100);
-
+    }
 
     content.push({
       type: 'text' as const,
@@ -793,9 +552,9 @@ export const agentEnd: Tool = {
     }
 
     // Clean up resources
-    if (session.computer)
+    if (session.computer) {
       await session.computer.close();
-
+    }
 
     // Update session status
     session.status = 'completed';
@@ -828,7 +587,7 @@ async function executeAgent(context: Context, sessionId: string, apiKey: string)
   try {
     // Update status to running and track steps remaining
     session.status = 'running';
-    session.stepsTotal = 0;  // Will be set when we parse the plan
+    session.stepsTotal = 0;  // Will be updated as we get actions
     session.stepsCompleted = 0;
     logToSession(sessionId, 'Agent execution started', 'text');
 
@@ -836,11 +595,11 @@ async function executeAgent(context: Context, sessionId: string, apiKey: string)
     const computer = new PlaywrightComputer(context);
     session.computer = computer;
 
-    // Initialize the OpenAI client
-    const openAIClient = new OpenAIClient(apiKey);
+    // Initialize the Computer Use Agent client
+    const computerUseAgent = new ComputerUseAgent(apiKey);
 
     // Execute the agent with instructions
-    await openAIClient.runComputerAgent(sessionId, computer, session.instructions);
+    await computerUseAgent.runComputerAgent(sessionId, computer, session.instructions);
 
     // Complete the session
     session.status = 'completed';
@@ -856,9 +615,9 @@ async function executeAgent(context: Context, sessionId: string, apiKey: string)
       // Attempt to take a screenshot to help with debugging if computer exists
       if (session.computer) {
         const finalScreenshot = await session.computer.screenshot();
-        if (finalScreenshot)
+        if (finalScreenshot) {
           logToSession(sessionId, 'Final state screenshot before error', 'image', finalScreenshot);
-
+        }
       }
     } catch (screenshotError: any) {
       console.error(`Failed to capture error screenshot for session ${sessionId}:`, screenshotError);

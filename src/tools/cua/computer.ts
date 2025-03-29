@@ -49,6 +49,18 @@ export class PlaywrightComputer {
   }
   
   /**
+   * Returns the browser capabilities like viewport dimensions.
+   */
+  async getBrowserCapabilities(): Promise<{width: number, height: number}> {
+    const page = await this.init();
+    const viewport = page.viewportSize() || { width: 1280, height: 720 };
+    return {
+      width: viewport.width,
+      height: viewport.height
+    };
+  }
+  
+  /**
    * Clicks at the specified coordinates on the page.
    */
   async click(x: number, y: number, button: string = 'left'): Promise<void> {
@@ -88,7 +100,7 @@ export class PlaywrightComputer {
   }
   
   /**
-   * Scrolls the page at the specified coordinates.
+   * Scrolls the page at the specified coordinates by the given delta.
    */
   async scroll(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
     const page = await this.init();

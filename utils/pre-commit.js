@@ -51,7 +51,23 @@ try {
   console.log('\nRunning standard linter checks on all changed TS files');
   execSync(`npx eslint ${tsFiles.join(' ')}`, { stdio: 'inherit' });
   
-  console.log('\nAll linter checks passed! Proceeding with commit.');
+  // Run Claude quality check if available
+  try {
+    console.log('\nRunning Claude quality check on uncommitted changes');
+    execSync(`npx playwright test tests/claude-quality-check.spec.ts`, { stdio: 'inherit' });
+    console.log('\nClaude quality check passed!');
+  } catch (error) {
+    // If Claude isn't available, we'll just warn but not block the commit
+    if (error.message.includes('command not found')) {
+      console.warn('\nWarning: Claude CLI not available. Skipping quality check.');
+    } else {
+      console.error('\nClaude quality check failed:', error.message);
+      console.error('Please review the issues above before committing.');
+      process.exit(1);
+    }
+  }
+
+  console.log('\nAll checks passed! Proceeding with commit.');
   process.exit(0);
 } catch (error) {
   console.error('\nLinter checks failed. Please fix the issues before committing.');
