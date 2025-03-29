@@ -216,7 +216,6 @@ export class PlaywrightComputer {
         // Log the error but continue execution
         console.log(`Created error page for failed navigation to ${finalUrl}`);
       }
-      }
     } catch (error: any) {
       console.error(`Fatal navigation error: ${error.message}`);
       throw error;

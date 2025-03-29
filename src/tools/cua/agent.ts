@@ -73,11 +73,83 @@ class ComputerUseAgent {
 
   async callOpenAIAPI(payload: any): Promise<any> {
     return new Promise((resolve, reject) => {
-      const data = JSON.stringify(payload);
-
+      // For computer-use-preview, we need to adapt the payload format
+      let finalPayload: any = payload;
+      let endpoint = '/v1/chat/completions';
+      
+      if (payload.model === 'computer-use-preview') {
+        // Convert to the correct format for computer-use-preview
+        endpoint = '/v1/completions';
+        
+        // Convert messages to a list format for the API
+        const promptMessages: Array<{role: string, content: string}> = [];
+        if (payload.messages) {
+          payload.messages.forEach((msg: any) => {
+            if (msg.role === 'system') {
+              promptMessages.push({
+                role: 'system',
+                content: msg.content
+              });
+            } else if (msg.role === 'user') {
+              promptMessages.push({
+                role: 'user', 
+                content: msg.content
+              });
+            } else if (msg.role === 'assistant') {
+              promptMessages.push({
+                role: 'assistant',
+                content: msg.content
+              });
+            }
+          });
+        }
+        
+        // Build the tool parameter for computer-use-preview
+        interface BrowserTool {
+          browser: {
+            width: number;
+            height: number;
+            screenshot?: string;
+          }
+        }
+        
+        let browserTools: BrowserTool | null = null;
+        if (payload.tools && payload.tools.length > 0) {
+          // Extract the browser info from the first tool
+          const firstTool = payload.tools[0];
+          if (firstTool && firstTool.type === 'computer' && 
+              firstTool.computer && firstTool.computer.screen) {
+            browserTools = {
+              browser: {
+                width: firstTool.computer.screen.width || 1280,
+                height: firstTool.computer.screen.height || 720
+              }
+            };
+            
+            // Add screenshot if available
+            if (firstTool.computer.screen.image_base64) {
+              browserTools.browser.screenshot = firstTool.computer.screen.image_base64;
+            }
+          }
+        }
+        
+        // Create the completions request format with prompt as a list
+        finalPayload = {
+          model: 'computer-use-preview',
+          prompt: promptMessages,
+          max_tokens: 1000,
+          temperature: 0.7
+        };
+        
+        // The computer-use-preview model doesn't seem to accept tools through the API directly
+        // We'll rely on the system prompt to describe the use case
+      }
+      
+      const data = JSON.stringify(finalPayload);
+      
       const options = {
         hostname: 'api.openai.com',
-        path: '/v1/chat/completions',
+        path: endpoint,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -99,6 +171,16 @@ class ComputerUseAgent {
               reject(new Error(`OpenAI API error: ${parsedData.error.message}`));
               return;
             }
+            
+            // If it's a completions response, convert it to chat completions format
+            if (parsedData.choices && !parsedData.choices[0].message && parsedData.choices[0].text) {
+              // Convert completions format to chat completions format
+              parsedData.choices[0].message = {
+                role: 'assistant',
+                content: parsedData.choices[0].text
+              };
+            }
+            
             resolve(parsedData);
           } catch (e: any) {
             console.error('Error parsing OpenAI response:', e);
@@ -121,7 +203,7 @@ class ComputerUseAgent {
    * Run the Computer Use Agent with the given instructions
    */
   async runComputerAgent(sessionId: string, computer: PlaywrightComputer, instructions: string): Promise<void> {
-    logToSession(sessionId, `Processing instructions with Computer Use Agent: ${instructions}`, 'text');
+    logToSession(sessionId, `Processing instructions with AI: ${instructions}`, 'text');
     
     // Get initial screenshot for the Computer Use Agent
     const screenshot = await computer.screenshot();
@@ -137,19 +219,40 @@ class ComputerUseAgent {
       // Set up browser capabilities
       const browserInfo = await computer.getBrowserCapabilities();
       
-      // Create the payload for the Computer Use Agent
-      const payload = {
-        model: 'computer-use-preview',
-        messages: [
-          { 
-            role: 'system', 
-            content: 'You are a helpful computer control assistant that helps users with browser tasks.'
-          },
-          { 
-            role: 'user', 
-            content: instructions
+      // Define the payload type
+      interface InitialOpenAIPayload {
+        model: string;
+        messages: Array<{role: string, content: string}>;
+        tools: Array<{
+          type: string, 
+          computer: {
+            type: string, 
+            screen: {
+              width: number, 
+              height: number,
+              image_base64?: string
+            }
           }
-        ],
+        }>;
+        tool_choice: {type: string};
+      }
+      
+      // Create messages for the Computer Use Agent in a more structured way
+      const initialMessages = [
+        { 
+          role: 'system', 
+          content: 'You are a helpful computer control assistant that helps users with browser tasks.'
+        },
+        { 
+          role: 'user', 
+          content: instructions
+        }
+      ];
+      
+      // Create the initial payload - use our converter to handle the format adaptation
+      const initialPayload: InitialOpenAIPayload = {
+        model: 'computer-use-preview',
+        messages: initialMessages,
         tools: [
           {
             type: 'computer',
@@ -157,7 +260,8 @@ class ComputerUseAgent {
               type: 'browser',
               screen: {
                 width: browserInfo.width,
-                height: browserInfo.height
+                height: browserInfo.height,
+                image_base64: screenshot // Include initial screenshot
               }
             }
           }
@@ -165,55 +269,57 @@ class ComputerUseAgent {
         tool_choice: { type: 'computer' }
       };
       
-      logToSession(sessionId, 'Sending request to Computer Use Agent API', 'text');
+      logToSession(sessionId, 'Sending initial request to AI', 'text');
       
-      // Initialize variables to track our progress
-      let toolExecutionComplete = false;
-      let lastResponseMessage = null;
+      // Initialize tracking variables
+      let conversationComplete = false;
       let continuationToken = null;
-      sessionData.stepsTotal = 0;  // Will be updated as we get actions
-      sessionData.stepsCompleted = 0;
+      let imageData = null;
       
-      // Loop until the agent completes the task or we encounter an error
-      while (!toolExecutionComplete) {
-        // If we have a continuation token, add it to the request
-        const requestPayload = {...payload};
-        if (continuationToken) {
-          requestPayload.tool_continuation = {
-            prompt_index: 0,
-            tool_index: 0,
-            continuation_token: continuationToken
-          };
+      // Track all messages for the conversation
+      const conversationMessages = [
+        { 
+          role: 'system', 
+          content: 'You are a helpful computer control assistant that helps users with browser tasks.'
+        },
+        { 
+          role: 'user', 
+          content: instructions
         }
-        
-        // Send the request to the OpenAI API
-        const response = await this.callOpenAIAPI(requestPayload);
-        
-        if (!response.choices || response.choices.length === 0) {
-          throw new Error('No response choices from the Computer Use Agent API');
-        }
-        
+      ];
+      
+      // Send initial request to the OpenAI API
+      let response = await this.callOpenAIAPI(initialPayload);
+      
+      if (!response.choices || response.choices.length === 0) {
+        throw new Error('No response choices from the AI API');
+      }
+      
+      // Add the response to our message history
+      conversationMessages.push(response.choices[0].message);
+      
+      // Process each turn of the conversation - one action at a time
+      while (!conversationComplete) {
         const choice = response.choices[0];
-        lastResponseMessage = choice.message;
+        const message = choice.message;
+        
+        logToSession(sessionId, 'Received AI response', 'text');
         
         // Check if there's a tool call in the response
-        if (lastResponseMessage.tool_calls && lastResponseMessage.tool_calls.length > 0) {
-          const toolCall = lastResponseMessage.tool_calls[0];
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          const toolCall = message.tool_calls[0];
           
-          // Execute computer actions based on the tool call
+          // Process computer action
           if (toolCall.type === 'computer') {
-            const computerActions = toolCall.computer.actions;
+            // Get the actions to execute (should be just one in most cases)
+            const computerActions = toolCall.computer.actions || [];
             
-            if (computerActions && computerActions.length > 0) {
-              // Update step count for progress tracking
-              sessionData.stepsTotal += computerActions.length;
+            if (computerActions.length > 0) {
+              logToSession(sessionId, `Processing computer actions (${computerActions.length})`, 'text');
               
-              // Log the actions we're about to execute
-              logToSession(sessionId, `Received ${computerActions.length} actions from Computer Use Agent`, 'text');
-              
-              // Perform each action
+              // Execute each action individually
               for (const action of computerActions) {
-                // Update the current action in the session
+                // Update the current action in the session for tracking
                 sessionData.currentAction = JSON.stringify(action);
                 logToSession(sessionId, `Executing action: ${sessionData.currentAction}`, 'text');
                 
@@ -245,12 +351,12 @@ class ComputerUseAgent {
                       continue;
                   }
                   
-                  // Take a screenshot after each action to show progress
-                  const actionScreenshot = await computer.screenshot();
-                  logToSession(sessionId, `Screenshot after ${action.type} action`, 'image', actionScreenshot);
+                  // Take a screenshot after each action
+                  imageData = await computer.screenshot();
+                  logToSession(sessionId, `Screenshot after ${action.type} action`, 'image', imageData);
                   
-                  // Update progress
-                  sessionData.stepsCompleted++;
+                  // Increment progress count
+                  sessionData.stepsCompleted = (sessionData.stepsCompleted || 0) + 1;
                   
                 } catch (actionError: any) {
                   logToSession(sessionId, `Error executing action: ${actionError.message}`, 'text');
@@ -259,43 +365,112 @@ class ComputerUseAgent {
                 }
               }
               
-              // Check if we need to continue or if we're done
+              // After executing actions, prepare for the next turn
+              // Check if we have a continuation token
               if (toolCall.computer.continuation_token) {
                 continuationToken = toolCall.computer.continuation_token;
-                logToSession(sessionId, 'More actions pending, continuing execution', 'text');
+                
+                // Prepare for the next turn with screenshot feedback
+                // This is crucial - we need to send back the screenshot with the continuation token
+                // Define the payload type with optional tool_continuation property
+                interface OpenAIPayload {
+                  model: string;
+                  messages: Array<{role: string, content: string}>;
+                  tools: Array<{
+                    type: string, 
+                    computer: {
+                      type: string, 
+                      screen: {
+                        width: number, 
+                        height: number, 
+                        image_base64?: string
+                      }
+                    }
+                  }>;
+                  tool_choice: {type: string};
+                  tool_response?: {
+                    tool_call_id: string;
+                    type: string;
+                    computer: {
+                      screen: {
+                        image_base64: string | null;
+                      }
+                    }
+                  };
+                  tool_continuation?: {
+                    prompt_index: number;
+                    tool_index: number;
+                    continuation_token: string;
+                  };
+                }
+
+                // Create the payload with proper typing
+                // For continuation, we still use the chat completions format since it's easier
+                // to keep track of the conversation history, let the adapter handle format conversion
+                const nextPayload: OpenAIPayload = {
+                  model: 'computer-use-preview',
+                  messages: conversationMessages,
+                  tools: [
+                    {
+                      type: 'computer',
+                      computer: {
+                        type: 'browser',
+                        screen: {
+                          width: browserInfo.width,
+                          height: browserInfo.height,
+                          image_base64: imageData || undefined // Include the screenshot after action
+                        }
+                      }
+                    }
+                  ],
+                  tool_choice: { type: 'computer' }
+                };
+                
+                // The continuation token is managed automatically by our adapter method
+                
+                logToSession(sessionId, 'Sending screenshot and continuing execution', 'text');
+                
+                // Get the next action from the AI
+                response = await this.callOpenAIAPI(nextPayload);
+                
+                if (!response.choices || response.choices.length === 0) {
+                  throw new Error('No response choices from the AI API in continuation');
+                }
+                
+                // Add the new response to our message history
+                conversationMessages.push(response.choices[0].message);
+                
               } else {
-                toolExecutionComplete = true;
-                logToSession(sessionId, 'All actions completed successfully', 'text');
+                // No continuation token means we're done with this sequence
+                conversationComplete = true;
+                logToSession(sessionId, 'AI execution completed - no more actions', 'text');
               }
             } else {
-              // No actions were provided, so we're done
-              toolExecutionComplete = true;
-              logToSession(sessionId, 'Computer Use Agent completed (no actions)', 'text');
+              // No actions to execute - conversation is complete
+              conversationComplete = true;
+              logToSession(sessionId, 'AI completed (no actions requested)', 'text');
             }
           } else {
             throw new Error(`Unexpected tool call type: ${toolCall.type}`);
           }
         } else {
-          // No tool calls in the response, so we're done
-          toolExecutionComplete = true;
+          // No tool calls - just a message response, so we're done
+          conversationComplete = true;
           
-          // If there's content in the message, log it
-          if (lastResponseMessage.content) {
-            logToSession(sessionId, `Computer Use Agent message: ${lastResponseMessage.content}`, 'text');
+          if (message.content) {
+            logToSession(sessionId, `AI message: ${message.content}`, 'text');
           } else {
-            logToSession(sessionId, 'Computer Use Agent completed (no message)', 'text');
+            logToSession(sessionId, 'AI completed (no message)', 'text');
           }
         }
       }
       
-      // Log the final result
-      if (lastResponseMessage && lastResponseMessage.content) {
-        logToSession(sessionId, `Final message from Computer Use Agent: ${lastResponseMessage.content}`, 'text');
-      }
+      // Final report
+      logToSession(sessionId, `AI execution completed after ${sessionData.stepsCompleted || 0} actions`, 'text');
       
     } catch (error: any) {
-      console.error(`Computer Use Agent error for session ${sessionId}:`, error);
-      logToSession(sessionId, `Error in Computer Use Agent: ${error.message}`, 'text');
+      console.error(`AI execution error for session ${sessionId}:`, error);
+      logToSession(sessionId, `Error in AI execution: ${error.message}`, 'text');
       throw error;
     }
   }
