@@ -95,9 +95,8 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
     console.log('   c. Remove custom parsing of AI responses');
     console.log('   d. Follow OpenAI documentation for Computer Use Agent');
     console.log('3. Remove custom simulation logic (screenshot analysis, coordinate parsing)');
-    console.log('4. Reference examples in:');
-    console.log('   - ~/GitHub/openai-cua-sample-app');
-    console.log('   - ~/GitHub/klick-genome2/apps/webtests/lib/cua/');
+    console.log('4. Reference examples in the OpenAI documentation:');
+    console.log('   - https://platform.openai.com/docs/guides/computer-use');
     console.log('\nExample OpenAI Computer Use Agent request format:');
     console.log(`
 {
@@ -141,9 +140,8 @@ To fix these issues:
 2. Implement proper Computer Use Agent API format
 3. Remove custom screenshot parsing and simulation logic
 
-Reference the proper implementation in:
-- ~/GitHub/openai-cua-sample-app
-- ~/GitHub/klick-genome2/apps/webtests/lib/cua/
+Reference the proper implementation in the OpenAI documentation:
+- https://platform.openai.com/docs/guides/computer-use
 `;
 
     fs.writeFileSync(path.join(process.cwd(), 'cua-test-report.txt'), reportContent, 'utf-8');
