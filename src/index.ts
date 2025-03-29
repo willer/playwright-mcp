@@ -84,7 +84,7 @@ export function createServer(options?: Options): Server {
   const baseTools = options?.vision ? screenshotTools : snapshotTools;
   // Always include the CUA tools
   const tools = [...baseTools, ...cuaTools];
-  
+
   return createServerWithTools({
     name: 'Playwright',
     version: packageJSON.version,

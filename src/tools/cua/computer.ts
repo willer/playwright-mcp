@@ -143,106 +143,67 @@ export class PlaywrightComputer {
       } catch (error: any) {
         console.error(`Navigation error: ${error.message}`);
         
-        // If navigation fails, check if it's a test URL and provide a meaningful fallback
-        if (finalUrl.includes('amazon.com')) {
-          // Create a simple page that has a search box and product grid
-          console.log('Creating a fallback Amazon-like page for testing');
-          await page.setContent(`
-            <html>
-              <head>
-                <title>Amazon.com: Dish Sets</title>
-                <style>
-                  body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-                  .search-bar { width: 100%; padding: 10px; margin-bottom: 20px; }
-                  .product-grid { display: flex; flex-wrap: wrap; }
-                  .product-card { border: 1px solid #ddd; margin: 10px; padding: 10px; width: 200px; }
-                  .product-card img { width: 100%; height: auto; }
-                  .product-title { font-weight: bold; margin-top: 10px; }
-                  .product-price { color: #B12704; font-weight: bold; margin-top: 5px; }
-                  .add-to-cart { background-color: #FFD814; padding: 8px; border: none; margin-top: 10px; cursor: pointer; }
-                </style>
-              </head>
-              <body>
-                <div>
-                  <input type="text" class="search-bar" value="colorful dish sets" placeholder="Search Amazon">
-                  <div class="product-grid">
-                    <div class="product-card">
-                      <div style="width:180px;height:180px;background:#eee;"></div>
-                      <div class="product-title">Colorful 16-Piece Dinnerware Set</div>
-                      <div class="product-price">$49.99</div>
-                      <button class="add-to-cart">Add to Cart</button>
-                    </div>
-                    <div class="product-card">
-                      <div style="width:180px;height:180px;background:#eee;"></div>
-                      <div class="product-title">Modern Rainbow Ceramic Plates</div>
-                      <div class="product-price">$59.99</div>
-                      <button class="add-to-cart">Add to Cart</button>
-                    </div>
-                    <div class="product-card">
-                      <div style="width:180px;height:180px;background:#eee;"></div>
-                      <div class="product-title">Handcrafted Multicolor Bowl Set</div>
-                      <div class="product-price">$39.99</div>
-                      <button class="add-to-cart">Add to Cart</button>
-                    </div>
-                  </div>
-                </div>
-              </body>
-            </html>
-          `);
-        } else if (finalUrl.includes('google.com')) {
-          // Create a simple Google-like page with a search box
-          console.log('Creating a fallback Google-like page for testing');
-          await page.setContent(`
-            <html>
-              <head>
-                <title>Google</title>
-                <style>
-                  body { font-family: Arial, sans-serif; text-align: center; margin-top: 100px; }
-                  .search-box { width: 500px; padding: 15px; margin: 20px auto; display: block; font-size: 16px; border-radius: 24px; border: 1px solid #dfe1e5; outline: none; }
-                  .search-buttons { margin: 30px; }
-                  .search-button { background-color: #f8f9fa; border: 1px solid #f8f9fa; border-radius: 4px; color: #3c4043; margin: 0 4px; padding: 10px 16px; cursor: pointer; }
-                  .results { margin: 20px auto; width: 600px; text-align: left; display: none; }
-                  .result { margin-bottom: 20px; }
-                  .result-title { color: #1a0dab; font-size: 18px; }
-                  .result-link { color: #006621; font-size: 14px; }
-                  .result-description { color: #545454; font-size: 14px; }
-                </style>
-                <script>
-                  function showResults() {
-                    document.querySelector('.results').style.display = 'block';
-                    document.querySelector('.search-box').value = "colorful dish sets";
-                  }
-                </script>
-              </head>
-              <body>
-                <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAJYAAACOCAMAAADuuhYBAAAAM1BMVEXz9Pa5vsqGjaCSnK6zucf19/jn6e3N0dnZ3OPg4+je4eTGy9O+w82nrrw9RFmcorLq7O+GEUUeAAAFNUlEQVR4nO1b25KrIBCUEQFR0f//2cPl4tVoNNvZOqd7qpKUCZ12cwGcnQ6Hw+FwOBwOh8PhcDgcDofD4XA4HA6Hw+FwOBwOh8PhcDj+DEDi1XFWxCoC+TnorwERUbIOY1Ee5aT8VkisQnlNiY7S5GJeV4TzpcPXTR2LH1SiKLj3q71qWxSL9X3q2i5pv0KCX1fNVFS1yv+g2KnI16zJptfe9olWJ+BDZqw0tQr+LB/dGa8PTHb+iLrTGVapospNPg6vCLDchR+Qn8v7v3uhL71kHvQKXH6Q0T4WITGp9gqo+Bp5zqe5wZKvs8g0r5hYfZ0JXSxaGPgydorhmUm05PuZGnuJmNPLOIqoZN+Z2YqFOmMM5QQtN1X3BupJfucaDHTzmDh1vRqGa4qzKnSJKhgxmgc1r5iBYjbOo7rcHLJJawVq43IIdLWaPtR5UHlj0kbUO3TsFFMLG41E1CzTn3UqwTlMClGj1d7pZMNKqXMRV7t01e2jqMOqR29MdmB1R9dgIwLWDc09zOypYCEiabIhGBfFRqRGd/rkiVY7fBht4TwH7t9Gcr3nW4qDUCuQLYT0Qm2zVGtdGD6Mgo+IRpO5FgcKF46dIVSuYAHgOIa7OwIKWzr9BIL1pluIzZJmLbTZCFhtGGJ3LrJvJKzlzxYyJJJvSVluWC5bCKp8a4L3DlGQJFDgk8QQpOvf38WXvBVCXIr0UaFRfwzrA8L7hbrlm4Xp7nq2S9I5UexuvWo5dkHubiQNzKLbtl69AO1ueIQAl2K2l4XIeM5/t1A0cLSGKGp1QZXaVyUQR8H+1kJJVNe41gEMOKxOBSSp5dtbC+H5N/iigbHtoKv7bcQVpkiG5uXgDYDDYfENQxpTxGCiWULEnHF2hQQN5b6FqG+tY/r1K1RnGmk/xZ2Fqbpt5aV2jUUjIzjtsnnszOw7C0VAZKeLQEphbG0pBG32zsIEK/Hxdy5h5k7e5Sm7pfW9heDPRNtYT8Z6q+UYwxZmPnYW6mbBiR0d4QMiRNYkBr7OhUzQrMR3iYEfYqGcW8y9hYRYs+aEg3+XDpg7C1OnMw1S9ZlLCKmqznADpVfN9ruFJYxzCNpYeK7BMJBuiHNrIQvvUuKJdkrPTFD44L05fAtRdWshIGC9Mw5dg2xPvGMy1c1D3+kWYpKpZE5Ik1JVsruSFBQWEE4tO2mIwj2JNr+WtW+hqjYWiPSNFR1qKcqt9OmZMgqLM6A+WTNunVeQmQuxUBrxRmLsTdjIkOQVNq4UlonURjS0eLJA3RiZeXPZQoB8D8wJPRKhcIYW1uZKHh9mpkuLtZMxECXnbNMOY5NLbG9mYhjXpKQKl0KHpCpjZKgXy3q6bGAhqCeqpL1MuDlPfYOZ34s1lL1h6JZoFXDTFjpzAyXD/pzFl9VltZEyU56v0YqBqkRSs78Q0YnUk0v7QRML9Qf7Uo1YHGYLzbk6w1cLEXLWIazXJmN1PB2n/nqdtXWlb29EoDCrLuXNl+nKnC4nQ9UdkDXMZp0D9O5+oVvqJrGQC0AcnpZaXaOOTG78SqyxTp/PZdX59Klod6PQJ/QF0eGKmJQbQDqpE9NmvKMu1e0qEcqt5rDrpB2jc7LsvdlZocTZnrXXSRz9pLZQMAjP+g9bH4m8Mm+dNtQHLh+QM68U+uZu+UKQbj+vHCDlhxZ5RIpZzcvHtXvL0+FwOBwOh8PhcDgcDofD4XA4HA6Hw/EP8R/ZoCwr39tWNQAAAABJRU5ErkJggg==" alt="Google">
-                <input type="text" class="search-box" placeholder="Search Google or type a URL">
-                <div class="search-buttons">
-                  <button class="search-button" onclick="showResults()">Google Search</button>
-                  <button class="search-button">I'm Feeling Lucky</button>
-                </div>
-                
-                <div class="results">
-                  <div class="result">
-                    <div class="result-title">Colorful Dish Sets on Wayfair</div>
-                    <div class="result-link">www.wayfair.com › tableware › colorful-dish-sets</div>
-                    <div class="result-description">Shop colorful dish sets at Wayfair. Free shipping & returns on dish sets and dinnerware sets in vibrant colors.</div>
-                  </div>
-                  <div class="result">
-                    <div class="result-title">Amazon.com: Colorful Dish Sets</div>
-                    <div class="result-link">www.amazon.com › colorful-dish-sets</div>
-                    <div class="result-description">Results 1 - 48 of 10000+ — Discover colorful dish sets on Amazon.com at great prices. Free shipping on qualified orders.</div>
-                  </div>
-                  <div class="result">
-                    <div class="result-title">Colorful Dinnerware Sets | Crate & Barrel</div>
-                    <div class="result-link">www.crateandbarrel.com › dinnerware › colorful-sets</div>
-                    <div class="result-description">Shop for colorful dinnerware sets. Add a vibrant touch to your table with our collection of dinner plates, salad plates and bowls.</div>
-                  </div>
-                </div>
-              </body>
-            </html>
-          `);
-        }
+        // If navigation fails, create a basic error page showing the error
+        // This avoids hardcoded domain-specific fallbacks
+        await page.setContent(`
+          <html>
+            <head>
+              <title>Navigation Error</title>
+              <style>
+                body { 
+                  font-family: Arial, sans-serif; 
+                  text-align: center; 
+                  margin-top: 100px;
+                  color: #444;
+                }
+                .error-container {
+                  max-width: 600px;
+                  margin: 0 auto;
+                  padding: 20px;
+                  border: 1px solid #ddd;
+                  border-radius: 8px;
+                  background-color: #f9f9f9;
+                }
+                .error-icon {
+                  font-size: 64px;
+                  color: #d32f2f;
+                  margin-bottom: 20px;
+                }
+                .error-url {
+                  font-family: monospace;
+                  background-color: #f0f0f0;
+                  padding: 5px 8px;
+                  border-radius: 4px;
+                }
+                .error-message {
+                  margin: 20px 0;
+                  color: #d32f2f;
+                }
+                .error-details {
+                  margin-top: 20px;
+                  text-align: left;
+                  padding: 10px;
+                  background-color: #f0f0f0;
+                  border-radius: 4px;
+                  font-family: monospace;
+                  font-size: 14px;
+                }
+              </style>
+            </head>
+            <body>
+              <div class="error-container">
+                <div class="error-icon">⚠️</div>
+                <h1>Navigation Error</h1>
+                <p>Unable to navigate to <span class="error-url">${finalUrl}</span></p>
+                <div class="error-message">${error.message}</div>
+                <p>This error page was generated because the requested URL could not be loaded.</p>
+              </div>
+            </body>
+          </html>
+        `);
+        // Log the error but continue execution
+        console.log(`Created error page for failed navigation to ${finalUrl}`);
+      }
       }
     } catch (error: any) {
       console.error(`Fatal navigation error: ${error.message}`);
