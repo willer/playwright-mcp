@@ -33,7 +33,7 @@ The CUA feature allows AI agents to interact with web browsers through natural l
 
 An example use case that should succeed in testing is a natural-language, multi-task request like "go to amazon, find a nice set of dishes, add to cart, and tell me the name and url of the dishes you added".
 
-CUA should be implemented using the latest tech, ie the computer-use tool and the computer-use-preview model, running on the https://api.openai.com/v1/responses endpoint (i.e. not chatcompletion).
+CUA should be implemented using the latest tech, ie the computer-preview tool and the computer-use-preview model, running on the https://api.openai.com/v1/responses endpoint (i.e. not chatcompletion).
 
 ### 3. MCP Protocol Support
 

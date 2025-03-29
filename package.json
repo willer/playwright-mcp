@@ -38,6 +38,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.1",
     "commander": "^13.1.0",
+    "node-fetch": "^3.3.2",
     "playwright": "1.52.0-alpha-1743011787000",
     "uuid": "^9.0.1",
     "zod-to-json-schema": "^3.24.4"

@@ -39,6 +39,7 @@ const cuaTools: Tool[] = [
   cua.agentLog,
   cua.agentEnd,
   cua.agentGetLastImage,
+  cua.agentReply,
 ];
 
 const snapshotTools: Tool[] = [

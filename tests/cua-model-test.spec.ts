@@ -42,9 +42,9 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
     usingCorrectModel = agentCode.includes("model: 'computer-use-preview'");
     
     // Check for tool definitions that would indicate proper Computer Use Preview API
-    usingComputerTools = agentCode.includes('type: "computer"') || 
-                          agentCode.includes('type: \'computer\'') ||
-                          agentCode.match(/tools:\s*\[\s*\{\s*type:\s*['"]computer['"]/s) !== null;
+    usingComputerTools = agentCode.includes('type: "computer-preview"') || 
+                          agentCode.includes('type: \'computer-preview\'') ||
+                          agentCode.match(/tools:\s*\[\s*\{\s*type:\s*['"]computer-preview['"]/s) !== null;
     
     // Check for gpt-4o (incorrect model)
     usingGpt4o = agentCode.includes("model: 'gpt-4o'") || 
@@ -63,8 +63,8 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
     'Update the model parameter in API calls to "computer-use-preview".';
   
   const toolsErrorMsg = 'CUA implementation is NOT using the proper computer tools format. ' +
-    'Proper implementation should include tools with type "computer" or ' +
-    'specific computer action tools. Use the proper Computer Use Agent API format.';
+    'Proper implementation should include tools with type "computer-preview" with ' +
+    'the appropriate parameters. Use the proper Computer Use Agent API format as shown in the OpenAI sample code.';
     
   const gpt4ErrorMsg = 'Current implementation is incorrectly using gpt-4o or gpt-4-turbo model ' +
     'instead of computer-use-preview. This approach tries to simulate CUA ' +
@@ -90,30 +90,20 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
     console.log('\nTo fix this issue:');
     console.log('1. Update the model to "computer-use-preview" in agent.ts');
     console.log('2. Use the proper Computer Use Agent API format:');
-    console.log('   a. Replace custom request handling with proper OpenAI API structure');
-    console.log('   b. Add required "tools" parameter with type "computer"');
-    console.log('   c. Remove custom parsing of AI responses');
-    console.log('   d. Follow OpenAI documentation for Computer Use Agent');
-    console.log('3. Remove custom simulation logic (screenshot analysis, coordinate parsing)');
-    console.log('4. Reference examples in the OpenAI documentation:');
-    console.log('   - https://platform.openai.com/docs/guides/computer-use');
+    console.log('   a. Use the /v1/responses endpoint instead of /v1/chat/completions');
+    console.log('   b. Add required "tools" parameter with type "computer-preview"');
+    console.log('   c. Follow the OpenAI sample code format for API requests');
+    console.log('3. Follow the computer-use-preview model documentation');
+    console.log('4. Reference examples in the sample code:');
+    console.log('   - https://github.com/openai/openai-cua-sample-app');
     console.log('\nExample OpenAI Computer Use Agent request format:');
     console.log(`
 {
   "model": "computer-use-preview",
-  "messages": [
-    {"role": "system", "content": "You are a computer control agent. Execute the user's request precisely."},
+  "input": [
     {"role": "user", "content": "Click the login button"}
   ],
-  "tools": [
-    {
-      "type": "computer",
-      "computer": {
-        "type": "browser",
-        "screen": {"width": 1280, "height": 800}
-      }
-    }
-  ]
+  "truncation": "auto"
 }
     `);
   }
@@ -127,21 +117,21 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
 CUA Implementation Test Report
 -----------------------------
 Using computer-use-preview model: ${usingCorrectModel ? 'YES ✅' : 'NO ❌'}
-Using proper Computer tools API: ${usingComputerTools ? 'YES ✅' : 'NO ❌'}
+Using proper Computer-Preview tools API: ${usingComputerTools ? 'YES ✅' : 'NO ❌'}
 Using incorrect gpt-4o model: ${usingGpt4o ? 'YES ❌' : 'NO ✅'}
 
 Current implementation issues:
 ${!usingCorrectModel ? '- NOT using the computer-use-preview model ❌\n' : ''}
 ${usingGpt4o ? '- Using INCORRECT gpt-4o/gpt-4-turbo model ❌\n' : ''}
-${!usingComputerTools ? '- NOT using proper Computer Use Agent tools format ❌\n' : ''}
+${!usingComputerTools ? '- NOT using proper computer-preview tools format ❌\n' : ''}
 
 To fix these issues:
 1. Update model to computer-use-preview
-2. Implement proper Computer Use Agent API format
-3. Remove custom screenshot parsing and simulation logic
+2. Use the /v1/responses endpoint
+3. Implement proper tools with type: "computer-preview"
 
-Reference the proper implementation in the OpenAI documentation:
-- https://platform.openai.com/docs/guides/computer-use
+Reference the sample implementation:
+- https://github.com/openai/openai-cua-sample-app
 `;
 
     fs.writeFileSync(path.join(process.cwd(), 'cua-test-report.txt'), reportContent, 'utf-8');
