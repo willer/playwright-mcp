@@ -40,6 +40,7 @@ test('test tool list', async ({ client, visionClient }) => {
     'agent_status',
     'agent_log',
     'agent_end',
+    'agent_get_last_image',
   ]);
 
   const { tools: visionTools } = await visionClient.listTools();
@@ -61,6 +62,7 @@ test('test tool list', async ({ client, visionClient }) => {
     'agent_status',
     'agent_log',
     'agent_end',
+    'agent_get_last_image',
   ]);
 });
 

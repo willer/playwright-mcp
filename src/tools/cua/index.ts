@@ -14,5 +14,5 @@
  * limitations under the License.
  */
 
-export { agentStart, agentStatus, agentLog, agentEnd } from './agent';
+export { agentStart, agentStatus, agentLog, agentEnd, agentGetLastImage } from './agent';
 export { PlaywrightComputer } from './computer';

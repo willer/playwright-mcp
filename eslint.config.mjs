@@ -25,14 +25,32 @@ import importRules from "eslint-plugin-import";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Import our custom rules
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const robustCodeRules = require('./utils/robust-code-rules.js');
+const robustTestRules = require('./utils/robust-test-rules.js');
+
 const plugins = {
   "@stylistic": stylistic,
   "@typescript-eslint": typescriptEslint,
   notice,
   import: importRules,
+  "robust": { 
+    rules: { 
+      "code-quality": robustCodeRules,
+      "test-quality": robustTestRules
+    } 
+  }
 };
 
 export const baseRules = {
+  // Robust code quality rules
+  "robust/code-quality": 2, // Enforce robust coding practices across the codebase
+  
+  // Robust test quality rules
+  "robust/test-quality": 2, // Enforce robust testing practices
+  
   "@typescript-eslint/no-unused-vars": [
     2,
     { args: "none", caughtErrors: "none" },

@@ -2,6 +2,30 @@
 
 A Model Context Protocol (MCP) server that provides browser automation capabilities using [Playwright](https://playwright.dev). This server enables LLMs to interact with web pages through structured accessibility snapshots, bypassing the need for screenshots or visually-tuned models.
 
+### Development Guidelines
+
+We enforce robust coding practices throughout the codebase through custom ESLint rules built around these principles:
+
+1. **Robustness Over Workarounds**: Code must properly handle errors and corner cases
+2. **Generic Over Specific**: Code should be configurable without hardcoded domains or services
+3. **Test Integrity**: Tests must never be skipped or disabled - fix the underlying issue instead
+4. **Clean Codebase**: No commented-out code, proper Promise handling, and consistent error handling
+
+See [LINTER-RULES.md](utils/LINTER-RULES.md) for detailed explanation of all enforced rules.
+
+To install the pre-commit hook that enforces these rules:
+```bash
+npm run install-hooks
+```
+
+To run the linter checks manually:
+```bash
+npm run lint        # Run all linting checks
+npm run lint:fix    # Fix automatically fixable issues
+npm run lint:code   # Run robust code quality checks
+npm run lint:tests  # Run robust test quality checks
+```
+
 ### Key Features
 
 - **Fast and lightweight**: Uses Playwright's accessibility tree, not pixel-based input.

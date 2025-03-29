@@ -17,10 +17,14 @@
   "scripts": {
     "build": "tsc",
     "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "lint:code": "eslint \"src/**/*.ts\" --rule \"robust/code-quality:2\"",
+    "lint:tests": "eslint \"tests/**/*.ts\" --rule \"robust/test-quality:2\"",
     "watch": "tsc --watch",
     "test": "playwright test",
     "clean": "rm -rf lib",
     "prepare": "npm run build",
+    "install-hooks": "cp utils/pre-commit.js .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit",
     "npm-publish": "npm run clean && npm run build && npm run test && npm publish"
   },
   "exports": {

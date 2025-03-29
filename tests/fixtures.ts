@@ -43,12 +43,14 @@ export const test = baseTest.extend<Fixtures>({
     let client: StdioClientTransport | undefined;
 
     use(async options => {
+      // Use headless mode by default to avoid opening browser windows during tests
       const args = ['--headless', '--user-data-dir', userDataDir];
       if (options?.vision)
         args.push('--vision');
       const transport = new StdioClientTransport({
         command: 'node',
         args: [path.join(__dirname, '../cli.js'), ...args],
+        env: options?.env || process.env,
       });
       const client = new Client({ name: 'test', version: '1.0.0' });
       await client.connect(transport);
