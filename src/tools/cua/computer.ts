@@ -24,6 +24,7 @@ import type * as playwright from 'playwright';
 export class PlaywrightComputer {
   private context: Context;
   private page: playwright.Page | null = null;
+  readonly environment: string = 'browser'; // Required for compatibility with Python code
   
   constructor(context: Context) {
     this.context = context;
@@ -131,95 +132,25 @@ export class PlaywrightComputer {
    * Navigates to the specified URL with direct approach.
    */
   async navigate(url: string): Promise<void> {
-    try {
-      const page = await this.init();
+    const page = await this.init();
       
-      // Parse and normalize the URL
-      let finalUrl = url;
+    // Parse and normalize the URL
+    let finalUrl = url;
       
-      // Ensure URL has proper protocol
-      if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
-        finalUrl = 'https://' + finalUrl;
-      }
-      
-      console.error(`Navigating to: ${finalUrl}`);
-      
-      try {
-        // Use a longer timeout and simpler load state
-        await page.goto(finalUrl, { 
-          timeout: 60000, 
-          waitUntil: 'domcontentloaded',
-        });
-        
-        console.error(`Successfully navigated to ${finalUrl}`);
-      } catch (error: any) {
-        console.error(`Navigation error: ${error.message}`);
-        
-        // If navigation fails, create a basic error page showing the error
-        // This avoids hardcoded domain-specific fallbacks
-        await page.setContent(`
-          <html>
-            <head>
-              <title>Navigation Error</title>
-              <style>
-                body { 
-                  font-family: Arial, sans-serif; 
-                  text-align: center; 
-                  margin-top: 100px;
-                  color: #444;
-                }
-                .error-container {
-                  max-width: 600px;
-                  margin: 0 auto;
-                  padding: 20px;
-                  border: 1px solid #ddd;
-                  border-radius: 8px;
-                  background-color: #f9f9f9;
-                }
-                .error-icon {
-                  font-size: 64px;
-                  color: #d32f2f;
-                  margin-bottom: 20px;
-                }
-                .error-url {
-                  font-family: monospace;
-                  background-color: #f0f0f0;
-                  padding: 5px 8px;
-                  border-radius: 4px;
-                }
-                .error-message {
-                  margin: 20px 0;
-                  color: #d32f2f;
-                }
-                .error-details {
-                  margin-top: 20px;
-                  text-align: left;
-                  padding: 10px;
-                  background-color: #f0f0f0;
-                  border-radius: 4px;
-                  font-family: monospace;
-                  font-size: 14px;
-                }
-              </style>
-            </head>
-            <body>
-              <div class="error-container">
-                <div class="error-icon">⚠️</div>
-                <h1>Navigation Error</h1>
-                <p>Unable to navigate to <span class="error-url">${finalUrl}</span></p>
-                <div class="error-message">${error.message}</div>
-                <p>This error page was generated because the requested URL could not be loaded.</p>
-              </div>
-            </body>
-          </html>
-        `);
-        // Log the error but continue execution
-        console.error(`Created error page for failed navigation to ${finalUrl}`);
-      }
-    } catch (error: any) {
-      console.error(`Fatal navigation error: ${error.message}`);
-      throw error;
+    // Ensure URL has proper protocol
+    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+      finalUrl = 'https://' + finalUrl;
     }
+      
+    console.error(`Navigating to: ${finalUrl}`);
+      
+    // Use a longer timeout and simpler load state
+    await page.goto(finalUrl, { 
+      timeout: 60000, 
+      waitUntil: 'domcontentloaded',
+    });
+      
+    console.error(`Successfully navigated to ${finalUrl}`);
   }
   
   /**

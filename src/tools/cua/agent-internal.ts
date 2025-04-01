@@ -23,11 +23,22 @@ export interface ComputerOutput {
   current_url?: string;
 }
 
+// Explicitly define the input_image type for type safety
+export interface InputImageOutput extends ComputerOutput {
+  type: 'input_image';
+  current_url?: string;
+}
+
+export interface ComputerErrorOutput {
+  type: string;
+  error: string;
+}
+
 export interface ComputerCallOutput {
   type: string;
   call_id: string;
   acknowledged_safety_checks: any[];
-  output: ComputerOutput | { type: string, error: string };
+  output: ComputerOutput | ComputerErrorOutput;
 }
 
 export interface ComputerAction {

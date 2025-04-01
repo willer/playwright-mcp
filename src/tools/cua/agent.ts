@@ -22,40 +22,13 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import fetch from 'node-fetch';
 
-// Define proper interfaces for our API outputs
-interface ComputerOutput {
-  type: string;
-  image_url: string;
-  current_url?: string;
-}
-
-interface ComputerCallOutput {
-  type: string;
-  call_id: string;
-  acknowledged_safety_checks: any[];
-  output: ComputerOutput;
-}
+// Import the types from agent-internal.ts
+import { ComputerOutput, InputImageOutput, ComputerErrorOutput, ComputerCallOutput, ComputerAction, SessionInfo } from './agent-internal';
 
 // Types for the Computer Use Agent API
 interface ComputerUseAgentInput {
   role: string;
   content: string;
-}
-
-interface ComputerAction {
-  type: string;
-  [key: string]: any;
-}
-
-interface ComputerCallOutput {
-  type: string;
-  call_id: string;
-  acknowledged_safety_checks: any[];
-  output: {
-    type: string;
-    image_url: string;
-    current_url?: string;
-  };
 }
 
 interface ComputerCallItem {
@@ -70,18 +43,7 @@ interface MessageItem {
   content: { text: string }[];
 }
 
-interface SessionInfo {
-  sessionId: string;
-  computer: PlaywrightComputer;
-  status: 'running' | 'completed' | 'error';
-  startTime: number;
-  endTime?: number;
-  error?: string;
-  logs: string[];
-  images: string[];
-  items: any[]; // Track all items in the session
-  runningTime?: number;
-}
+// SessionInfo already imported from agent-internal.ts
 
 // Store active sessions
 const activeSessions: Map<string, SessionInfo> = new Map();
@@ -117,13 +79,14 @@ async function createResponse(kwargs: Record<string, any>, sessionInfo?: Session
     // Use safer logging - avoid direct JSON.stringify to prevent MCP stderr parsing errors
     console.error(`API request: model=${debugPayload.model}, items=${debugPayload.input?.length || 0}`);
     
-    // Analyze the input to check for any missing tool results
+    // Let the API handle mismatched tool call/results
+    // Simple validation for logging only (not modifying input)
     if (kwargs.input && Array.isArray(kwargs.input)) {
       // Track all tool call IDs and corresponding tool results
       const toolCallIds = new Set<string>();
       const resultIds = new Set<string>();
       
-      // First pass: collect all IDs
+      // First pass: collect all IDs 
       for (const item of kwargs.input) {
         if (item.type === 'tool_call' && item.id) {
           toolCallIds.add(item.id);
@@ -132,60 +95,11 @@ async function createResponse(kwargs: Record<string, any>, sessionInfo?: Session
         }
       }
       
-      // Check for missing tool results
-      let missingResults = false;
+      // Log any missing tool results (diagnostic only)
       for (const callId of toolCallIds) {
         if (!resultIds.has(callId)) {
           console.error(`WARNING: Missing tool_result for tool_call ${callId}`);
-          missingResults = true;
         }
-      }
-      
-      // Fix missing tool results if needed
-      if (missingResults && sessionInfo) {
-        console.error(`Fixing missing tool results before API call`);
-        
-        // Find the latest screenshot for creating fake tool results
-        let latestScreenshot = '';
-        if (sessionInfo && sessionInfo.images && sessionInfo.images.length > 0) {
-          latestScreenshot = sessionInfo.images[sessionInfo.images.length - 1];
-        }
-        
-        // Create a copy of the input array to modify
-        const fixedInput = [...kwargs.input];
-        
-        // Add missing tool results
-        for (const callId of toolCallIds) {
-          if (!resultIds.has(callId)) {
-            console.error(`Adding missing tool_result for ${callId}`);
-            
-            // Find the corresponding tool call to create a proper result
-            const toolCall = fixedInput.find(item => item.type === 'tool_call' && item.id === callId);
-            
-            // Only add if we found the tool call
-            if (toolCall) {
-              // Create a tool result that matches the tool call
-              const toolResult = {
-                type: 'tool_result',
-                tool_call_id: callId,
-                output: JSON.stringify({
-                  browser: {
-                    screenshot: latestScreenshot,
-                    current_url: 'https://example.com' // Default URL
-                  }
-                })
-              };
-              
-              // Add the tool result to the fixed input array
-              fixedInput.push(toolResult);
-              console.error(`Added tool_result for ${callId}`);
-            }
-          }
-        }
-        
-        // Replace the input with our fixed version
-        kwargs.input = fixedInput;
-        console.error(`Input fixed with ${fixedInput.length} items`);
       }
     }
     
@@ -198,71 +112,38 @@ async function createResponse(kwargs: Record<string, any>, sessionInfo?: Session
       }
     }
     
-    // FINAL VALIDATION - critical check to ensure all tool calls have results
-    // This is a separate validation step to catch any tool calls that were missed earlier
+    // Log validation info but let API handle errors properly
     if (kwargs.input && Array.isArray(kwargs.input)) {
-      // Track all tool call IDs and corresponding tool results again
-      const finalToolCallIds = new Set<string>();
-      const finalResultIds = new Set<string>();
+      // Track tool calls and their responses for logging purposes
+      const toolCallIds = new Set<string>();
+      const toolResultIds = new Set<string>();
+      const computerCallIds = new Set<string>();
+      const computerCallOutputIds = new Set<string>();
       
-      // First pass: collect all IDs
+      // Collect all IDs from the conversation
       for (const item of kwargs.input) {
         if (item.type === 'tool_call' && item.id) {
-          finalToolCallIds.add(item.id);
-          console.error(`VALIDATION: Found tool_call with ID ${item.id}`);
+          toolCallIds.add(item.id);
         } else if (item.type === 'tool_result' && item.tool_call_id) {
-          finalResultIds.add(item.tool_call_id);
-          console.error(`VALIDATION: Found tool_result for ID ${item.tool_call_id}`);
+          toolResultIds.add(item.tool_call_id);
+        } else if (item.type === 'computer_call' && item.call_id) {
+          computerCallIds.add(item.call_id);
+        } else if (item.type === 'computer_call_output' && item.call_id) {
+          computerCallOutputIds.add(item.call_id);
         }
       }
       
-      // Check for missing tool results
-      let stillMissingResults = false;
-      for (const callId of finalToolCallIds) {
-        if (!finalResultIds.has(callId)) {
-          console.error(`CRITICAL: Still missing tool_result for tool_call ${callId} after fixes`);
-          stillMissingResults = true;
+      // Log any missing responses (for diagnostic purposes)
+      for (const callId of toolCallIds) {
+        if (!toolResultIds.has(callId)) {
+          console.error(`API WARNING: Missing tool_result for tool_call ${callId}`);
         }
       }
       
-      // Generate emergency fallback results if needed
-      if (stillMissingResults && sessionInfo) {
-        console.error(`EMERGENCY: Creating last-chance tool results before API call`);
-        
-        // Find the latest screenshot for creating emergency tool results
-        let emergencyScreenshot = '';
-        if (sessionInfo && sessionInfo.images && sessionInfo.images.length > 0) {
-          emergencyScreenshot = sessionInfo.images[sessionInfo.images.length - 1];
+      for (const callId of computerCallIds) {
+        if (!computerCallOutputIds.has(callId)) {
+          console.error(`API WARNING: Missing computer_call_output for computer_call ${callId}`);
         }
-        
-        // Create a copy of the input array to modify
-        const emergencyInput = [...kwargs.input];
-        
-        // Add missing tool results as a final safeguard
-        for (const callId of finalToolCallIds) {
-          if (!finalResultIds.has(callId)) {
-            console.error(`EMERGENCY: Adding last-chance result for ${callId}`);
-            
-            // Create an emergency tool result
-            const emergencyResult = {
-              type: 'tool_result',
-              tool_call_id: callId,
-              output: JSON.stringify({
-                browser: {
-                  screenshot: emergencyScreenshot,
-                  current_url: 'https://emergency-fallback.example.com'
-                }
-              })
-            };
-            
-            // Add the emergency result to the input array
-            emergencyInput.push(emergencyResult);
-          }
-        }
-        
-        // Replace the input with our emergency fixed version
-        kwargs.input = emergencyInput;
-        console.error(`EMERGENCY: Fixed input with ${emergencyInput.length} items`);
       }
     }
     
@@ -330,24 +211,28 @@ async function handleAction(action: ComputerAction, computer: PlaywrightComputer
     // Take a screenshot after the action
     const screenshot = await computer.screenshot();
     
-    // Create call output with just the screenshot at first
-    const callOutput: ComputerCallOutput = {
-      type: 'computer_call_output',
-      call_id: callId,
-      acknowledged_safety_checks: [],
-      output: {
-        type: 'input_image',
-        image_url: `data:image/jpeg;base64,${screenshot}`
-      }
+    // Create screenshot output with proper typing
+    const outputObj: InputImageOutput = {
+      type: 'input_image',
+      image_url: `data:image/jpeg;base64,${screenshot}`,
+      current_url: ''
     };
     
     // Add current URL if possible (exactly following sample code pattern)
     try {
       const currentUrl = await computer.getCurrentUrl();
-      callOutput.output.current_url = currentUrl;
+      outputObj.current_url = currentUrl;
     } catch (error) {
       console.error('Error getting current URL:', error);
     }
+    
+    // Create the complete call output
+    const callOutput: ComputerCallOutput = {
+      type: 'computer_call_output',
+      call_id: callId,
+      acknowledged_safety_checks: [],
+      output: outputObj
+    };
     
     return callOutput;
   } catch (error) {
@@ -366,109 +251,15 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
     throw new Error(`Session ${sessionId} not found`);
   }
 
+  // Handle messages - direct port of Python implementation
   if (item.type === 'message') {
-    // Print messages, just like the Python implementation
     const messageText = item.content[0]?.text || 'No message content';
     console.error(`[${sessionId}] Message: ${messageText}`);
     sessionInfo.logs.push(`Message: ${messageText}`);
     return [];
   }
 
-  if (item.type === 'tool_call') {
-    // Handle tool calls from the CUA model - use safe logging
-    console.error(`[${sessionId}] Received tool_call - id: ${item.id || 'missing-id'}, function: ${item.function?.name || 'unknown'}`);
-    
-    if (item.function && item.function.name === 'computer') {
-      try {
-        // Parse the computer action from the function arguments
-        let args;
-        try {
-          args = JSON.parse(item.function.arguments);
-        } catch (parseError) {
-          console.error(`Error parsing tool call arguments: ${parseError}`);
-          throw new Error(`Invalid tool call arguments: ${parseError}`);
-        }
-        
-        if (!args || !args.action || !args.action.type) {
-          throw new Error('Invalid computer action: missing type');
-        }
-        
-        const action = args.action;
-        const actionType = action.type;
-        const actionArgs = Object.fromEntries(
-          Object.entries(action).filter(([key]) => key !== 'type')
-        );
-        
-        console.error(`[${sessionId}] Computer action: ${actionType} with ${Object.keys(actionArgs).length} args`);
-        sessionInfo.logs.push(`Action: ${actionType} with args: ${Object.keys(actionArgs).join(', ')}`);
-        
-        // Execute the action on the computer
-        await (computer as any)[actionType](...Object.values(actionArgs));
-        
-        // Take a screenshot after the action
-        const screenshotBase64 = await computer.screenshot();
-        
-        // Build the call output with proper tool_result type
-        // Make sure we're using the correct properties for the tool_call_id
-        const tool_call_id = item.id || item.call_id;
-        
-        // Ensure we actually have a tool_call_id
-        if (!tool_call_id) {
-          console.error(`[${sessionId}] Missing tool_call_id in item:`, item);
-          throw new Error('Missing tool_call_id in tool_call item');
-        }
-        
-        console.error(`[${sessionId}] Responding to tool_call_id: ${tool_call_id}`);
-        
-        const callOutput = {
-          type: 'tool_result',
-          tool_call_id: tool_call_id,
-          output: JSON.stringify({
-            browser: {
-              screenshot: screenshotBase64,
-              current_url: await computer.getCurrentUrl().catch(() => '')
-            }
-          })
-        };
-        
-        // Store the screenshot in the session
-        sessionInfo.images.push(screenshotBase64);
-        
-        return [callOutput];
-      } catch (error: any) {
-        console.error(`[${sessionId}] Error executing computer action:`, error);
-        sessionInfo.logs.push(`Error: ${error.message || 'Unknown error'}`);
-        
-        // Return a failed tool result
-        const tool_call_id = item.id || item.call_id;
-        if (!tool_call_id) {
-          console.error(`[${sessionId}] Missing tool_call_id in error handling:`, item);
-          throw new Error('Missing tool_call_id in tool_call item during error handling');
-        }
-        
-        return [{
-          type: 'tool_result',
-          tool_call_id: tool_call_id,
-          output: JSON.stringify({ error: error.message || 'Unknown error' })
-        }];
-      }
-    } else {
-      console.warn(`[${sessionId}] Unknown tool call: ${item.function?.name}`);
-      const tool_call_id = item.id || item.call_id;
-      if (!tool_call_id) {
-        console.error(`[${sessionId}] Missing tool_call_id for unknown tool:`, item);
-        throw new Error('Missing tool_call_id in tool_call item for unknown tool');
-      }
-      
-      return [{
-        type: 'tool_result',
-        tool_call_id: tool_call_id,
-        output: JSON.stringify({ error: `Unsupported tool: ${item.function?.name}` })
-      }];
-    }
-  }
-  
-  // Backward compatibility with computer_call type
+  // Handle computer_call - direct port of Python implementation
   if (item.type === 'computer_call') {
     try {
       // Extract action details exactly as in Python
@@ -478,6 +269,7 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
         Object.entries(action).filter(([key]) => key !== 'type')
       );
       
+      // Log the action (equivalent to Python's print)
       console.error(`[${sessionId}] ${actionType}(${JSON.stringify(actionArgs)})`);
       sessionInfo.logs.push(`Action: ${actionType}(${JSON.stringify(actionArgs)})`);
       
@@ -487,21 +279,31 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
       // Take a screenshot after the action
       const screenshotBase64 = await computer.screenshot();
       
+      // Get pending safety checks (if any)
+      const pendingChecks = item.pending_safety_checks || [];
+      
       // Build the call output exactly as in Python
-      const callOutput: ComputerCallOutput = {
+      const callOutput = {
         type: 'computer_call_output',
         call_id: item.call_id,
-        acknowledged_safety_checks: item.pending_safety_checks || [],
+        acknowledged_safety_checks: pendingChecks,
         output: {
           type: 'input_image',
-          image_url: `data:image/jpeg;base64,${screenshotBase64}`,
-          current_url: ''  // Initialize with empty string
+          image_url: `data:image/jpeg;base64,${screenshotBase64}`
         }
       };
       
-      // Add current URL for browser environments, exactly as in Python
-      const currentUrl = await computer.getCurrentUrl();
-      callOutput.output.current_url = currentUrl;
+      // Add current URL for browser environments
+      if (computer.environment === 'browser') {
+        try {
+          const currentUrl = await computer.getCurrentUrl();
+          if (callOutput.output.type === 'input_image') {
+            (callOutput.output as InputImageOutput).current_url = currentUrl;
+          }
+        } catch (error) {
+          console.error('Could not get current URL:', error);
+        }
+      }
       
       // Store the screenshot in the session
       sessionInfo.images.push(screenshotBase64);
@@ -520,6 +322,66 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
           type: 'error',
           error: error.message
         }
+      }];
+    }
+  }
+  
+  // Handle tool_call (modern API)
+  if (item.type === 'tool_call' && item.function && item.function.name === 'computer') {
+    try {
+      // Parse the computer action from the function arguments
+      let args;
+      try {
+        args = JSON.parse(item.function.arguments);
+      } catch (parseError) {
+        throw new Error(`Invalid tool call arguments: ${parseError}`);
+      }
+      
+      if (!args || !args.action || !args.action.type) {
+        throw new Error('Invalid computer action: missing type');
+      }
+      
+      // Extract action details - same as for computer_call
+      const action = args.action;
+      const actionType = action.type;
+      const actionArgs = Object.fromEntries(
+        Object.entries(action).filter(([key]) => key !== 'type')
+      );
+      
+      console.error(`[${sessionId}] ${actionType}(${JSON.stringify(actionArgs)})`);
+      sessionInfo.logs.push(`Action: ${actionType}(${Object.keys(actionArgs).join(', ')})`);
+      
+      // Execute the action on the computer
+      await (computer as any)[actionType](...Object.values(actionArgs));
+      
+      // Take a screenshot after the action
+      const screenshotBase64 = await computer.screenshot();
+      
+      // Create tool result response
+      const toolResult = {
+        type: 'tool_result',
+        tool_call_id: item.id,
+        output: JSON.stringify({
+          browser: {
+            screenshot: screenshotBase64,
+            current_url: await computer.getCurrentUrl().catch(() => '')
+          }
+        })
+      };
+      
+      // Store the screenshot in the session
+      sessionInfo.images.push(screenshotBase64);
+      
+      return [toolResult];
+    } catch (error: any) {
+      console.error(`[${sessionId}] Error executing tool call action:`, error);
+      sessionInfo.logs.push(`Error: ${error.message || 'Unknown error'}`);
+      
+      // Return a failed tool result
+      return [{
+        type: 'tool_result',
+        tool_call_id: item.id,
+        output: JSON.stringify({ error: error.message || 'Unknown error' })
       }];
     }
   }
@@ -758,56 +620,12 @@ async function runComputerAgent(sessionId: string, computer: PlaywrightComputer,
         
         // Process each output item and get any results (e.g., screenshot after action)
         // Process each item individually, exactly as in Python
-        // Keep track of tool calls and results
-        const newToolCalls = new Map<string, any>();
-        const newToolResults = new Map<string, any>();
-        
-        // First, process all items and collect results
         for (const item of response.output) {
-          // Process the item and get any outputs
+          // Process the item and get any outputs (direct port of Python)
           const outputs = await handleItem(item, computer, sessionId);
           
-          // Track any tool calls in this batch
-          if (item.type === 'tool_call' && item.id) {
-            newToolCalls.set(item.id, item);
-          }
-          
-          // Add outputs to the conversation and track tool results
-          for (const output of outputs) {
-            if (output.type === 'tool_result' && output.tool_call_id) {
-              newToolResults.set(output.tool_call_id, output);
-            }
-          }
-          
-          // Add outputs to the conversation
+          // Add outputs to the conversation (Python: items += handle_item(item, computer))
           items.push(...outputs);
-        }
-        
-        // Check for any tool calls that don't have corresponding results
-        for (const [callId, callItem] of newToolCalls.entries()) {
-          if (!newToolResults.has(callId)) {
-            // Create a placeholder result
-            console.error(`Creating fallback tool_result for missing result ${callId}`);
-            
-            // Take a fresh screenshot to include
-            const fallbackScreenshot = await computer.screenshot();
-            sessionInfo.images.push(fallbackScreenshot);
-            
-            // Create a generic tool result
-            const fallbackResult = {
-              type: 'tool_result',
-              tool_call_id: callId,
-              output: JSON.stringify({
-                browser: {
-                  screenshot: fallbackScreenshot,
-                  current_url: await computer.getCurrentUrl().catch(() => '')
-                }
-              })
-            };
-            
-            // Add the fallback result to the conversation
-            items.push(fallbackResult);
-          }
         }
         
         // Check if we have a final message (assistant response ends the loop)
@@ -1209,9 +1027,69 @@ export async function agentReply(context: Context, params: { sessionId: string, 
               }
               
               // Create the payload for the API
+              // Add basic validation for robustness
+              // Track tool calls and responses
+              const replyToolCalls = new Map<string, any>();
+              const replyToolResults = new Map<string, any>();
+              
+              // Collect all tool calls and responses
+              for (const item of sessionInfo.items) {
+                if (item.type === 'tool_call' && item.id) {
+                  replyToolCalls.set(item.id, item);
+                } else if (item.type === 'tool_result' && item.tool_call_id) {
+                  replyToolResults.set(item.tool_call_id, item);
+                }
+              }
+              
+              // Check for missing responses
+              let inputItems = sessionInfo.items;
+              let hasMissingReplyResponses = false;
+              
+              for (const [callId, item] of replyToolCalls.entries()) {
+                if (!replyToolResults.has(callId)) {
+                  hasMissingReplyResponses = true;
+                  break;
+                }
+              }
+              
+              // Generate fallbacks if needed
+              if (hasMissingReplyResponses) {
+                console.error(`Found missing tool results in reply - generating fallbacks`);
+                
+                // Get latest screenshot
+                let latestScreenshot = '';
+                if (sessionInfo.images.length > 0) {
+                  latestScreenshot = sessionInfo.images[sessionInfo.images.length - 1];
+                }
+                
+                // Create fixed input
+                const fixedInput = [...sessionInfo.items];
+                
+                // Add fallbacks for missing results
+                for (const [callId, item] of replyToolCalls.entries()) {
+                  if (!replyToolResults.has(callId)) {
+                    console.error(`Adding fallback for tool_call ${callId}`);
+                    
+                    // Create a fallback tool result
+                    fixedInput.push({
+                      type: 'tool_result',
+                      tool_call_id: callId,
+                      output: JSON.stringify({
+                        browser: {
+                          screenshot: latestScreenshot,
+                          current_url: await computer.getCurrentUrl().catch(() => '')
+                        }
+                      })
+                    });
+                  }
+                }
+                
+                inputItems = fixedInput;
+              }
+              
               const kwargs = {
                 model: 'computer-use-preview',
-                input: sessionInfo.items,
+                input: inputItems,
                 tools: tools,
                 truncation: 'auto'
               };
@@ -1228,57 +1106,13 @@ export async function agentReply(context: Context, params: { sessionId: string, 
               // Add response outputs to the conversation
               sessionInfo.items.push(...response.output);
               
-              // Process each output item
-              // Keep track of tool calls and results
-              const newToolCalls = new Map<string, any>();
-              const newToolResults = new Map<string, any>();
-              
-              // First pass - process all items and collect tool calls/results
+              // Process each output item - keep it simple like Python
               for (const item of response.output) {
                 // Process the item and get any outputs
                 const outputs = await handleItem(item, computer, sessionId);
                 
-                // Track any tool calls in this batch
-                if (item.type === 'tool_call' && item.id) {
-                  newToolCalls.set(item.id, item);
-                }
-                
-                // Track tool results
-                for (const output of outputs) {
-                  if (output.type === 'tool_result' && output.tool_call_id) {
-                    newToolResults.set(output.tool_call_id, output);
-                  }
-                }
-                
                 // Add outputs to the conversation
                 sessionInfo.items.push(...outputs);
-              }
-              
-              // Check for any tool calls that don't have results
-              for (const [callId, callItem] of newToolCalls.entries()) {
-                if (!newToolResults.has(callId)) {
-                  // Create a placeholder result
-                  console.error(`Creating fallback tool_result for missing result ${callId} in reply`);
-                  
-                  // Take a fresh screenshot to include
-                  const fallbackScreenshot = await computer.screenshot();
-                  sessionInfo.images.push(fallbackScreenshot);
-                  
-                  // Create a generic tool result
-                  const fallbackResult = {
-                    type: 'tool_result',
-                    tool_call_id: callId,
-                    output: JSON.stringify({
-                      browser: {
-                        screenshot: fallbackScreenshot,
-                        current_url: await computer.getCurrentUrl().catch(() => '')
-                      }
-                    })
-                  };
-                  
-                  // Add the fallback result to the conversation
-                  sessionInfo.items.push(fallbackResult);
-                }
               }
               
               // Check if we have a final message
