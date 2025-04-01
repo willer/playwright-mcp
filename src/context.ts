@@ -14,11 +14,20 @@
  * limitations under the License.
  */
 
+import { fork } from 'child_process';
+import path from 'path';
+
 import * as playwright from 'playwright';
 
+export type ContextOptions = {
+  userDataDir: string;
+  launchOptions?: playwright.LaunchOptions;
+  cdpEndpoint?: string;
+  remoteEndpoint?: string;
+};
+
 export class Context {
-  private _userDataDir: string;
-  private _launchOptions: playwright.LaunchOptions | undefined;
+  private _options: ContextOptions;
   private _browser: playwright.Browser | undefined;
   private _page: playwright.Page | undefined;
   private _console: playwright.ConsoleMessage[] = [];
@@ -26,9 +35,8 @@ export class Context {
   private _fileChooser: playwright.FileChooser | undefined;
   private _lastSnapshotFrames: playwright.FrameLocator[] = [];
 
-  constructor(userDataDir: string, launchOptions?: playwright.LaunchOptions) {
-    this._userDataDir = userDataDir;
-    this._launchOptions = launchOptions;
+  constructor(options: ContextOptions) {
+    this._options = options;
   }
 
   async createPage(): Promise<playwright.Page> {
@@ -64,6 +72,25 @@ export class Context {
     this._console.length = 0;
   }
 
+  async install(): Promise<string> {
+    const channel = this._options.launchOptions?.channel || 'chrome';
+    const cli = path.join(require.resolve('playwright/package.json'), '..', 'cli.js');
+    const child = fork(cli, ['install', channel], {
+      stdio: 'pipe',
+    });
+    const output: string[] = [];
+    child.stdout?.on('data', data => output.push(data.toString()));
+    child.stderr?.on('data', data => output.push(data.toString()));
+    return new Promise((resolve, reject) => {
+      child.on('close', code => {
+        if (code === 0)
+          resolve(channel);
+        else
+          reject(new Error(`Failed to install browser: ${output.join('')}`));
+      });
+    });
+  }
+
   existingPage(): playwright.Page {
     if (!this._page)
       throw new Error('Navigate to a location to create a page');
@@ -96,18 +123,37 @@ export class Context {
   }
 
   private async _createPage(): Promise<{ browser?: playwright.Browser, page: playwright.Page }> {
-    if (process.env.PLAYWRIGHT_WS_ENDPOINT) {
-      const url = new URL(process.env.PLAYWRIGHT_WS_ENDPOINT);
-      if (this._launchOptions)
-        url.searchParams.set('launch-options', JSON.stringify(this._launchOptions));
+    if (this._options.remoteEndpoint) {
+      const url = new URL(this._options.remoteEndpoint);
+      if (this._options.launchOptions)
+        url.searchParams.set('launch-options', JSON.stringify(this._options.launchOptions));
       const browser = await playwright.chromium.connect(String(url));
       const page = await browser.newPage();
       return { browser, page };
     }
 
-    const context = await playwright.chromium.launchPersistentContext(this._userDataDir, this._launchOptions);
+    if (this._options.cdpEndpoint) {
+      const browser = await playwright.chromium.connectOverCDP(this._options.cdpEndpoint);
+      const browserContext = browser.contexts()[0];
+      let [page] = browserContext.pages();
+      if (!page)
+        page = await browserContext.newPage();
+      return { browser, page };
+    }
+
+    const context = await this._launchPersistentContext();
     const [page] = context.pages();
     return { page };
+  }
+
+  private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
+    try {
+      return await playwright.chromium.launchPersistentContext(this._options.userDataDir, this._options.launchOptions);
+    } catch (error: any) {
+      if (error.message.includes('Executable doesn\'t exist'))
+        throw new Error(`Browser specified in your config is not installed. Either install it (likely) or change the config.`);
+      throw error;
+    }
   }
 
   async allFramesSnapshot() {

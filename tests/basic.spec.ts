@@ -37,6 +37,7 @@ test('test tool list', async ({ client, visionClient }) => {
     'browser_save_as_pdf',
     'browser_close',
     'browser_console',
+    'browser_install',
   ]);
 
   const { tools: visionTools } = await visionClient.listTools();
@@ -55,6 +56,7 @@ test('test tool list', async ({ client, visionClient }) => {
     'browser_save_as_pdf',
     'browser_close',
     'browser_console',
+    'browser_install',
   ]);
 });
 
@@ -309,4 +311,55 @@ test('sse transport', async () => {
   } finally {
     cp.kill();
   }
+});
+
+test('cdp server', async ({ cdpEndpoint, startClient }) => {
+  const client = await startClient({ args: [`--cdp-endpoint=${cdpEndpoint}`] });
+  expect(await client.callTool({
+    name: 'browser_navigate',
+    arguments: {
+      url: 'data:text/html,<html><title>Title</title><body>Hello, world!</body></html>',
+    },
+  })).toHaveTextContent(`
+- Page URL: data:text/html,<html><title>Title</title><body>Hello, world!</body></html>
+- Page Title: Title
+- Page Snapshot
+\`\`\`yaml
+- document [ref=s1e2]: Hello, world!
+\`\`\`
+`
+  );
+});
+
+test('save as pdf', async ({ client }) => {
+  expect(await client.callTool({
+    name: 'browser_navigate',
+    arguments: {
+      url: 'data:text/html,<html><title>Title</title><body>Hello, world!</body></html>',
+    },
+  })).toHaveTextContent(`
+- Page URL: data:text/html,<html><title>Title</title><body>Hello, world!</body></html>
+- Page Title: Title
+- Page Snapshot
+\`\`\`yaml
+- document [ref=s1e2]: Hello, world!
+\`\`\`
+`
+  );
+
+  const response = await client.callTool({
+    name: 'browser_save_as_pdf',
+  });
+  expect(response).toHaveTextContent(/^Saved as.*page-[^:]+.pdf$/);
+});
+
+test('executable path', async ({ startClient }) => {
+  const client = await startClient({ args: [`--executable-path=bogus`] });
+  const response = await client.callTool({
+    name: 'browser_navigate',
+    arguments: {
+      url: 'data:text/html,<html><title>Title</title><body>Hello, world!</body></html>',
+    },
+  });
+  expect(response).toContainTextContent(`executable doesn't exist`);
 });
