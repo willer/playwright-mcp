@@ -21,8 +21,8 @@
 
 ## CUA Implementation Requirements
 - The implementation of CUA must exactly follow the example structures in `~/GitHub/openai-cua-sample-app/simple_cua_loop.py`
+- This means there must be zero workarounds, like system prompts instructing the CUA how to communicate with the browser, or any use whatsoever of gpt-4o
 - Maintain proper session management and cleanup for browser resources
-- Follow the communication flow defined in CUA_INTERFACE.md
 - Ensure all API calls have proper error handling and timeouts
 
 - Always use console.error, not console.log, so stdout MCP communications isn't polluted by the logs

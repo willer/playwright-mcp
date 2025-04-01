@@ -36,7 +36,7 @@ export class PlaywrightComputer {
    * Gets the existing page from the context.
    * This must return the same page as used by browser_* functions.
    */
-  private async getPage(): Promise<playwright.Page> {
+  async getPage(): Promise<playwright.Page> {
     // Always use the existing page - if there's no existing page,
     // something is wrong with the session setup
     return this.context.existingPage();
@@ -80,14 +80,51 @@ export class PlaywrightComputer {
    */
   async press(key: string): Promise<void> {
     const page = await this.getPage();
-    await page.keyboard.press(key);
+    
+    // Map CUA key names to Playwright key names
+    const keyMap: Record<string, string> = {
+      'BACKSPACE': 'Backspace',
+      'CTRL': 'Control',
+      'COMMAND': 'Meta',
+      'CMD': 'Meta',
+      'ALT': 'Alt',
+      'SHIFT': 'Shift',
+      'ENTER': 'Enter',
+      'TAB': 'Tab',
+      'ESCAPE': 'Escape',
+      'ESC': 'Escape',
+      'ARROWUP': 'ArrowUp',
+      'ARROWDOWN': 'ArrowDown',
+      'ARROWLEFT': 'ArrowLeft',
+      'ARROWRIGHT': 'ArrowRight',
+      'DELETE': 'Delete',
+      'END': 'End',
+      'HOME': 'Home',
+      'INSERT': 'Insert',
+      'PAGEDOWN': 'PageDown',
+      'PAGEUP': 'PageUp',
+      'CAPSLOCK': 'CapsLock',
+      'SPACE': ' ',
+      'SUPER': 'Meta'
+    };
+    
+    // Normalize the key name (convert to uppercase for case-insensitive matching)
+    const normalizedKey = key.toUpperCase();
+    const mappedKey = keyMap[normalizedKey] || key;
+    
+    console.error(`Pressing key: "${key}" (mapped to "${mappedKey}")`);
+    await page.keyboard.press(mappedKey);
   }
 
   /**
    * Waits for the specified number of milliseconds.
+   * If no time is specified, defaults to 1000ms (1 second).
    */
-  async wait(ms: number): Promise<void> {
-    await new Promise(resolve => setTimeout(resolve, ms));
+  async wait(ms: number = 1000): Promise<void> {
+    // Cap wait time at 5 seconds to prevent excessive waiting
+    const waitTime = Math.min(ms || 1000, 5000);
+    console.error(`Waiting for ${waitTime}ms`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
   }
 
   /**
@@ -141,5 +178,13 @@ export class PlaywrightComputer {
    */
   async close(): Promise<void> {
     // No-op, as the page is managed by the context
+  }
+
+  /**
+   * Gets the dimensions of the page viewport.
+   * Required for CUA implementation.
+   */
+  getDimensions(): { width: number; height: number } {
+    return { width: 1024, height: 768 }; // Default dimensions
   }
 }

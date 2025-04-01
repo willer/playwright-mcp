@@ -22,7 +22,7 @@
     "clean": "rm -rf lib",
     "prepare": "npm run build",
     "npm-publish": "npm run clean && npm run build && npm run test && npm publish",
-    "inspect": "npm run build && CLIENT_PORT=8081 SERVER_PORT=9001 npx @modelcontextprotocol/inspector node cli.js"
+    "inspect": "npm run build && CLIENT_PORT=9104 SERVER_PORT=9004 npx @modelcontextprotocol/inspector node cli.js"
   },
   "exports": {
     "./package.json": "./package.json",

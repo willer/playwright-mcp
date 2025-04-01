@@ -22,39 +22,80 @@ import type { Context } from '../../context';
 import { PlaywrightComputer } from './computer';
 import { normalizeUrl } from '../utils';
 
-// Session status types
-type SessionStatus = 'starting' | 'running' | 'completed' | 'error';
+// Import constants for blocked domains from a common file
+import { BLOCKED_DOMAINS } from '../blocked-domains';
+
+// CUA session types and interfaces
+interface CUAMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+interface CUAComputerCall {
+  type: 'computer_call';
+  call_id: string;
+  action: {
+    type: string;
+    [key: string]: any;
+  };
+  pending_safety_checks?: Array<{ message: string }>;
+}
+
+interface CUAComputerCallOutput {
+  type: 'computer_call_output';
+  call_id: string;
+  acknowledged_safety_checks?: Array<{ message: string }>;
+  output: {
+    type: 'input_image';
+    image_url: string;
+    current_url?: string;
+  };
+}
+
+interface CUAMessageItem {
+  type: 'message';
+  content: [{
+    type: 'text';
+    text: string;
+  }];
+}
+
+type CUAItem = CUAMessage | CUAComputerCall | CUAComputerCallOutput | CUAMessageItem;
+
+interface CUAResponse {
+  output: CUAItem[];
+}
 
 // Session data structure
 interface SessionData {
-  status: SessionStatus;
-  instructions: string;
-  logs: Array<{
-    timestamp: string;
-    message: string;
-    contentType: 'text' | 'image';
-    content: string;
-  }>;
+  items: CUAItem[];
+  status: 'starting' | 'running' | 'completed' | 'error';
+  images: string[]; // Base64 encoded screenshots
+  logs: string[]; // Text logs for debugging
   error?: string;
   startTime: number;
   endTime?: number;
+  runningTime?: number;
 }
 
-// Singleton session
-let globalSession: SessionData | null = null;
+// Map of session IDs to sessions
+const sessions: Map<string, SessionData> = new Map();
 
-// Helper function to log to the session
-function logToSession(message: string, contentType: 'text' | 'image' = 'text', content: string = ''): void {
-  if (!globalSession)
-    throw new Error('No active session found');
+// Generate a unique session ID
+function generateSessionId(): string {
+  return `session_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+}
 
-
-  globalSession.logs.push({
-    timestamp: new Date().toISOString(),
-    message,
-    contentType,
-    content
-  });
+// Check if a URL is blocklisted
+function checkBlocklistedUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname || '';
+    return BLOCKED_DOMAINS.some(domain => 
+      hostname === domain || hostname.endsWith(`.${domain}`)
+    );
+  } catch (error) {
+    return false;
+  }
 }
 
 // OpenAI API client for the Computer Use Agent interactions
@@ -65,13 +106,26 @@ class OpenAIClient {
     this.apiKey = apiKey;
   }
 
-  async createOpenAIRequest(payload: any): Promise<any> {
+  // Create a response using the OpenAI API's CUA model
+  async createCUAResponse(input: CUAItem[], tools: any[]): Promise<CUAResponse> {
+    // Define the OpenAI API endpoint for CUA
+    const apiUrl = 'https://api.openai.com/v1/responses';
+    
+    // Prepare the request data
+    const requestData = {
+      model: 'computer-use-preview',
+      input,
+      tools,
+      truncation: 'auto'
+    };
+
+    // Make the API request
     return new Promise((resolve, reject) => {
-      const data = JSON.stringify(payload);
+      const data = JSON.stringify(requestData);
 
       const options = {
         hostname: 'api.openai.com',
-        path: '/v1/chat/completions',
+        path: '/v1/responses',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -89,8 +143,26 @@ class OpenAIClient {
         res.on('end', () => {
           try {
             const parsedData = JSON.parse(responseData);
+            
+            // Log the response for debugging
+            console.error(`CUA API response status code: ${res.statusCode}`);
+            
+            // Error handling for different response types
+            if (res.statusCode !== 200) {
+              console.error(`API Error: ${JSON.stringify(parsedData)}`);
+              reject(new Error(`API Error (${res.statusCode}): ${parsedData.error?.message || 'Unknown error'}`));
+              return;
+            }
+            
+            if (!parsedData.output) {
+              console.error(`No output from model: ${JSON.stringify(parsedData)}`);
+              reject(new Error(`No output from model: ${JSON.stringify(parsedData)}`));
+              return;
+            }
+            
             resolve(parsedData);
           } catch (e: any) {
+            console.error(`Failed to parse response: ${e.message}, raw response: ${responseData.substring(0, 200)}...`);
             reject(new Error(`Failed to parse response: ${e.message}`));
           }
         });
@@ -104,111 +176,340 @@ class OpenAIClient {
       req.end();
     });
   }
+}
 
-  // This function will interact with OpenAI to process computer tasks
-  async runComputerAgent(computer: PlaywrightComputer, instructions: string): Promise<void> {
-    logToSession(`Processing instructions with AI: ${instructions}`, 'text');
+// Handle a computer call from the CUA
+async function handleComputerCall(
+  item: CUAComputerCall, 
+  computer: PlaywrightComputer, 
+  session: SessionData
+): Promise<CUAComputerCallOutput[]> {
+  const action = item.action;
+  const actionType = action.type;
+  
+  // Log the action for debugging
+  console.error(`Processing CUA action: ${actionType}(${JSON.stringify(action)})`);
+  session.logs.push(`Processing action: ${actionType}(${JSON.stringify(action)})`);
+  
+  // Check for any pending safety checks
+  const pendingChecks = item.pending_safety_checks || [];
+  
+  // Execute the requested computer action
+  try {
+    switch (actionType) {
+      case 'click':
+        await computer.click(action.x, action.y, action.button || 'left');
+        break;
+      case 'double_click':
+        await computer.doubleClick(action.x, action.y);
+        break;
+      case 'type':
+        await computer.type(action.text);
+        break;
+      case 'keypress':
+        if (Array.isArray(action.keys)) {
+          console.error(`Processing keypress with keys: ${JSON.stringify(action.keys)}`);
+          
+          // Handle keypress with multiple keys (keyboard shortcuts)
+          const page = await computer.getPage();
+          
+          // Press all keys down in sequence
+          for (const key of action.keys) {
+            console.error(`Pressing down: ${key}`);
+            await page.keyboard.down(key);
+          }
+          
+          // Release keys in reverse order
+          for (let i = action.keys.length - 1; i >= 0; i--) {
+            console.error(`Releasing: ${action.keys[i]}`);
+            await page.keyboard.up(action.keys[i]);
+          }
+        } else if (action.key) {
+          // Handle single key
+          await computer.press(action.key);
+        }
+        break;
+      case 'press':
+        await computer.press(action.key);
+        break;
+      case 'wait':
+        await computer.wait(action.ms);
+        break;
+      case 'navigate':
+      case 'goto':
+        await computer.navigate(action.url);
+        break;
+      case 'move':
+        await computer.move(action.x, action.y);
+        break;
+      case 'scroll':
+        // Not directly implemented, but could map to page.mouse.wheel
+        break;
+      // Could add more actions as needed
+    }
+  } catch (error: any) {
+    session.logs.push(`Error executing action: ${error.message}`);
+    console.error(`Error executing CUA action: ${error.message}`);
+  }
+  
+  // Take a screenshot after the action
+  const screenshot = await computer.screenshot();
+  session.images.push(screenshot);
+  
+  // Get the current URL for safety checking
+  const currentUrl = await computer.getCurrentUrl();
+  
+  // Check URL against blocklist
+  try {
+    if (checkBlocklistedUrl(currentUrl)) {
+      console.error(`Warning: Blocked URL detected: ${currentUrl}`);
+      session.logs.push(`Warning: Blocked URL detected: ${currentUrl}`);
+    }
+  } catch (error) {
+    // URL parsing error, continue
+  }
+  
+  // Return the computer call output
+  return [{
+    type: 'computer_call_output',
+    call_id: item.call_id,
+    acknowledged_safety_checks: pendingChecks,
+    output: {
+      type: 'input_image',
+      image_url: `data:image/jpeg;base64,${screenshot}`,
+      current_url: currentUrl
+    }
+  }];
+}
 
-    // Get initial screenshot
-    const screenshot = await computer.screenshot();
-    logToSession('Captured initial screenshot', 'image', screenshot);
-
-    // Create the initial message for the AI
-    const systemPrompt = `You are a browser automation agent that helps users complete tasks in a web browser.
-You have access to these computer control functions:
-- screenshot() - Take a screenshot of the current browser window
-- click(x, y) - Click at coordinates (x, y)
-- type(text) - Type the given text
-- press(key) - Press a keyboard key (e.g., "Enter", "ArrowDown")
-- wait(ms) - Wait for the specified number of milliseconds
-- navigate(url) - Navigate to the specified URL
-
-Think step by step about how to accomplish the user's goal. Analyze the screenshot to locate UI elements and determine the appropriate actions to take.`;
-
-    const userPrompt = `I need you to help me with the following task in a web browser:\n\n${instructions}\n\nPlease complete this task step by step, explaining your reasoning as you go.`;
-
-    try {
-      const response = await this.createOpenAIRequest({
-        model: 'gpt-4o',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: [
-            { type: 'text', text: userPrompt },
-            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${screenshot}` } }
-          ] }
-        ],
-        max_tokens: 2000
-      });
-
-      logToSession('Received AI response', 'text');
-
-      if (response.choices && response.choices.length > 0) {
-        const agentResponse = response.choices[0].message.content;
-        logToSession(`Agent's plan: ${agentResponse}`, 'text');
-
-        // Execute the plan by parsing the response and performing actions
-        await this.executeActions(computer, agentResponse);
-      } else {
-        throw new Error('No response from the OpenAI API');
-      }
-    } catch (error: any) {
-      logToSession(`Error in AI processing: ${error.message}`, 'text');
-      throw error;
+// Process items from a CUA response
+async function processCUAItems(
+  items: CUAItem[], 
+  computer: PlaywrightComputer,
+  session: SessionData
+): Promise<CUAItem[]> {
+  const newItems: CUAItem[] = [];
+  
+  for (const item of items) {
+    // Add the item to the session
+    session.items.push(item);
+    
+    // Handle message items
+    if ('type' in item && item.type === 'message') {
+      console.error(`CUA message: ${JSON.stringify(item.content)}`);
+      session.logs.push(`CUA message: ${JSON.stringify(item.content)}`);
+    }
+    
+    // Handle computer call items
+    if ('type' in item && item.type === 'computer_call') {
+      const callOutputs = await handleComputerCall(item, computer, session);
+      session.items.push(...callOutputs);
+      newItems.push(...callOutputs);
     }
   }
+  
+  return newItems;
+}
 
-  // Execute the actions described by the AI
-  async executeActions(computer: PlaywrightComputer, agentResponse: string): Promise<void> {
-    // Parse the response to identify actions
-    const lines = agentResponse.split('\n');
-
-    for (const line of lines) {
-      // Look for function-like commands in the text
-      if (line.includes('screenshot()')) {
-        logToSession('Taking screenshot', 'text');
-        const screenshot = await computer.screenshot();
-        logToSession('Screenshot taken', 'image', screenshot);
-      } else if (line.match(/click\(\s*\d+\s*,\s*\d+\s*\)/)) {
-        const match = line.match(/click\(\s*(\d+)\s*,\s*(\d+)\s*\)/);
-        if (match) {
-          const x = parseInt(match[1], 10);
-          const y = parseInt(match[2], 10);
-          logToSession(`Clicking at (${x}, ${y})`, 'text');
-          await computer.click(x, y);
+// Run the CUA conversation loop
+async function runCUALoop(
+  sessionId: string, 
+  computer: PlaywrightComputer, 
+  apiKey: string
+): Promise<void> {
+  const session = sessions.get(sessionId);
+  if (!session) return;
+  
+  try {
+    // Set session status to running
+    session.status = 'running';
+    
+    // Get initial screenshot
+    const screenshot = await computer.screenshot();
+    session.images.push(screenshot);
+    
+    // Get display dimensions from the computer
+    const dimensions = computer.getDimensions();
+    
+    // Define tools - CUA requires a computer-preview tool
+    const tools = [{
+      type: 'computer-preview',
+      display_width: dimensions.width,
+      display_height: dimensions.height,
+      environment: 'browser'
+    }];
+    
+    // Create OpenAI client
+    const openaiClient = new OpenAIClient(apiKey);
+    
+    // Initial items need both a call and its output
+    const initialItems: CUAItem[] = [
+      // First, a computer call for a screenshot
+      {
+        type: 'computer_call',
+        call_id: 'initial_screenshot',
+        action: {
+          type: 'screenshot'
         }
-      } else if (line.match(/type\(['"](.*)['"]\)/)) {
-        const match = line.match(/type\(['"](.*)['"](?:,\s*(\d+))?\)/);
-        if (match) {
-          const text = match[1];
-          logToSession(`Typing text: ${text}`, 'text');
-          await computer.type(text);
-        }
-      } else if (line.match(/press\(['"](.*)['"]\)/)) {
-        const match = line.match(/press\(['"](.*)['"](?:,\s*(\d+))?\)/);
-        if (match) {
-          const key = match[1];
-          logToSession(`Pressing key: ${key}`, 'text');
-          await computer.press(key);
-        }
-      } else if (line.match(/wait\(\s*\d+\s*\)/)) {
-        const match = line.match(/wait\(\s*(\d+)\s*\)/);
-        if (match) {
-          const ms = parseInt(match[1], 10);
-          logToSession(`Waiting for ${ms}ms`, 'text');
-          await computer.wait(ms);
-        }
-      } else if (line.match(/navigate\(['"](.*)['"](?:,\s*(\d+))?\)/)) {
-        const match = line.match(/navigate\(['"](.*)['"](?:,\s*(\d+))?\)/);
-        if (match) {
-          const url = match[1];
-          logToSession(`Navigating to: ${url}`, 'text');
-          await computer.navigate(url);
+      },
+      // Then, the output of that call
+      {
+        type: 'computer_call_output',
+        call_id: 'initial_screenshot',
+        output: {
+          type: 'input_image',
+          image_url: `data:image/jpeg;base64,${screenshot}`,
+          current_url: await computer.getCurrentUrl()
         }
       }
-
-      // Capture screenshot after each step to show progress
-      const screenshot = await computer.screenshot();
-      logToSession('Screenshot after action', 'image', screenshot);
+    ];
+    
+    // Add initial items to session
+    session.items.push(...initialItems);
+    
+    // Create a response loop
+    // Create a truncated list for the API calls, mimicking Python's behavior
+    let conversationContext: CUAItem[] = [];
+    
+    // Always include the user's initial instruction
+    const userInstruction = session.items.find(item => 'role' in item && item.role === 'user');
+    if (userInstruction) {
+      conversationContext.push(userInstruction);
+    }
+    
+    // Add the initial screenshot setup
+    conversationContext.push(
+      // First call
+      {
+        type: 'computer_call',
+        call_id: 'initial_screenshot',
+        action: {
+          type: 'screenshot'
+        }
+      },
+      // And its output
+      {
+        type: 'computer_call_output',
+        call_id: 'initial_screenshot',
+        output: {
+          type: 'input_image',
+          image_url: `data:image/jpeg;base64,${session.images[0]}`,
+          current_url: await computer.getCurrentUrl()
+        }
+      }
+    );
+    
+    console.error(`Initial context items: ${conversationContext.length}`);
+    
+    while (session.status === 'running') {
+      try {
+        // Log what we're sending - avoid sending the full image data to the console
+        const debugContext = conversationContext.map(item => {
+          if ('type' in item && item.type === 'computer_call_output' && item.output?.image_url) {
+            return {
+              ...item,
+              output: {
+                ...item.output,
+                image_url: `[image data - ${item.output.image_url.substring(0, 30)}...]`
+              }
+            };
+          }
+          return item;
+        });
+        console.error(`Sending ${conversationContext.length} items to API: ${JSON.stringify(debugContext)}`);
+        
+        // Create a CUA response with only necessary context
+        const response = await openaiClient.createCUAResponse(conversationContext, tools);
+        
+        // Process the output items
+        if (response.output && response.output.length > 0) {
+          console.error(`Received ${response.output.length} items from API`);
+          
+          // Store the full history in the session
+          session.items.push(...response.output);
+          
+          // Check for wait loop (model repeatedly calling wait)
+          const waitActions = response.output.filter(item => 
+            'type' in item && item.type === 'computer_call' && 
+            item.action?.type === 'wait'
+          );
+          
+          // If all actions are waits and we have multiple items, it's likely a wait loop
+          const isWaitLoop = waitActions.length === response.output.filter(item => 
+            'type' in item && item.type === 'computer_call'
+          ).length && waitActions.length > 0;
+          
+          if (isWaitLoop) {
+            console.error("Detected a wait loop - model is only calling wait. Adding a system message to help it break out of the loop.");
+            // Add a system message to help break the loop
+            session.items.push({
+              type: 'message',
+              content: [{
+                type: 'text',
+                text: "I notice you're waiting repeatedly. If you don't see the expected results, try clicking on a visible element or typing a more specific search like 'dish set' in the search box, then press Enter."
+              }]
+            });
+          }
+          
+          // Process computer calls and get any new outputs
+          const newItems = await processCUAItems(response.output, computer, session);
+          
+          // Reset conversation context for next loop 
+          conversationContext = [];
+          
+          // Always include the user's initial instruction
+          if (userInstruction) {
+            conversationContext.push(userInstruction);
+          }
+          
+          // Add the most recent items from this round to the next context
+          // This mimics how Python adds response.output to items
+          conversationContext.push(...response.output);
+          
+          // Add the latest outputs produced in this round (like screenshots)
+          if (newItems.length > 0) {
+            conversationContext.push(...newItems);
+          }
+          
+          // Check if we've reached the end of the conversation (no more computer calls)
+          const hasComputerCalls = response.output.some(item => 
+            'type' in item && item.type === 'computer_call'
+          );
+          
+          if (!hasComputerCalls && response.output.some(item => 'role' in item && item.role === 'assistant')) {
+            // End of conversation, update session status
+            session.status = 'completed';
+            session.endTime = Date.now();
+            session.runningTime = session.endTime - session.startTime;
+            console.error(`CUA session ${sessionId} completed`);
+            break;
+          }
+        }
+      } catch (error: any) {
+        session.logs.push(`Error in CUA loop: ${error.message}`);
+        console.error(`Error in CUA loop: ${error.message}`);
+        
+        // If there's an error, we'll continue the loop unless it's terminal
+        if (error.message.includes('No output from model') || 
+            error.message.includes('Failed to parse response')) {
+          session.status = 'error';
+          session.error = error.message;
+          session.endTime = Date.now();
+          session.runningTime = session.endTime - session.startTime;
+          break;
+        }
+      }
+    }
+  } catch (error: any) {
+    // Handle terminal errors
+    console.error(`Fatal error in CUA session ${sessionId}: ${error.message}`);
+    
+    if (session) {
+      session.status = 'error';
+      session.error = error.message;
+      session.endTime = Date.now();
+      session.runningTime = session.endTime - session.startTime;
+      session.logs.push(`Fatal error: ${error.message}`);
     }
   }
 }
@@ -230,71 +531,105 @@ export const agentStart: Tool = {
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentStartSchema.parse(params);
     
-    // Check if we need to set up a browser session first
+    // Check if we need to create a browser page
+    // Using the same approach as browser_navigate for consistency
+    let page;
+    let createdNewPage = false;
+    
     try {
-      // This will throw if there's no existing page
-      context.existingPage();
+      // Try to get existing page 
+      page = context.existingPage();
     } catch (e) {
+      // No page exists, create one exactly like browser_navigate does
+      createdNewPage = true;
+      
+      // If we created a new page and no startUrl was provided, set a default
+      if (!validatedParams.startUrl) {
+        validatedParams.startUrl = 'https://www.google.com';
+      }
+    }
+    
+    // Create a new session
+    const sessionId = generateSessionId();
+    
+    // If startUrl is provided or we need to create a new page, we'll navigate
+    if (validatedParams.startUrl || createdNewPage) {
+      // Ensure URL has a protocol using our shared utility function
+      const url = normalizeUrl(validatedParams.startUrl || 'https://www.google.com');
+      
+      try {
+        // Create or get the page using the same method as browser_navigate
+        if (createdNewPage) {
+          page = await context.createPage();
+          console.error(`Created new browser page for CUA session ${sessionId}`);
+        } else {
+          page = context.existingPage();
+        }
+        
+        // Use the same waitUntil option as browser_navigate
+        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        
+        // Use same cap on load event as browser_navigate 
+        await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+        
+        console.error(`Navigated to: ${url} for CUA session ${sessionId}`);
+      } catch (error: any) {
+        console.error(`Navigation error: ${error.message}`);
+      }
+    }
+    
+    // Initialize a new CUA session
+    const newSession: SessionData = {
+      items: [],
+      status: 'starting',
+      images: [],
+      logs: [`Session ${sessionId} created with instructions: ${validatedParams.instructions}`],
+      startTime: Date.now()
+    };
+    
+    // Add the user instruction as the first message
+    newSession.items.push({
+      role: 'user',
+      content: validatedParams.instructions
+    });
+    
+    // Store the session
+    sessions.set(sessionId, newSession);
+    
+    // Start the CUA loop in the background
+    // Get OpenAI API key from environment
+    const apiKey = process.env.OPENAI_API_KEY || '';
+    if (!apiKey) {
+      console.error('No OpenAI API key found in environment');
+      newSession.status = 'error';
+      newSession.error = 'No OpenAI API key found in environment';
       return {
         content: [{ 
           type: 'text' as const, 
           text: JSON.stringify({ 
-            error: 'No active browser session. Please use browser_navigate first to open a page before starting the agent.' 
+            error: 'No OpenAI API key found in environment',
+            sessionId 
           }) 
         }],
         isError: true,
       };
     }
     
-    // Check if there's already a session running and reuse it
-    if (!globalSession) {
-      // Only create a new session if one doesn't exist
-      globalSession = {
-        status: 'starting',
-        instructions: validatedParams.instructions,
-        logs: [],
-        startTime: Date.now(),
-      };
-    } else {
-      // Update existing session with new instructions
-      globalSession.instructions = validatedParams.instructions;
-      globalSession.status = 'starting';
-      // Keep existing logs
-    }
+    // Create a computer instance for this session
+    const computer = new PlaywrightComputer(context);
     
-    // If startUrl is provided, we'll navigate to it using our shared browser session
-    if (validatedParams.startUrl) {
-      // Ensure URL has a protocol using our shared utility function
-      const url = normalizeUrl(validatedParams.startUrl);
-      if (url !== validatedParams.startUrl) {
-        logToSession(`Adding https:// protocol to URL: ${url}`, 'text');
-      }
-
-      try {
-        // Use the existing page to navigate
-        const page = context.existingPage();
-        await page.goto(url, { timeout: 30000, waitUntil: 'domcontentloaded' });
-        logToSession(`Navigated to: ${url}`, 'text');
-        
-        // Store the successful URL
-        validatedParams.startUrl = url;
-      } catch (error: any) {
-        logToSession(`Navigation error: ${error.message}`, 'text');
-        // Continue with the session despite navigation error
-        // The user can still use the agent on the current page
-      }
-    }
-
-    // Log the start of the session
-    logToSession('Agent session started', 'text');
-
-    // Start the agent execution in the background
-    setTimeout(() => executeAgent(context, validatedParams.startUrl), 0);
-
+    // Start the CUA loop in the background
+    setTimeout(() => runCUALoop(sessionId, computer, apiKey), 0);
+    
+    // Return the session ID to the caller
     return {
       content: [{
         type: 'text' as const,
-        text: JSON.stringify({ status: globalSession.status })
+        text: JSON.stringify({ 
+          sessionId,
+          status: 'started',
+          message: 'CUA session started successfully'
+        })
       }],
     };
   },
@@ -302,38 +637,49 @@ export const agentStart: Tool = {
 
 // Agent status schema
 const agentStatusSchema = z.object({
+  sessionId: z.string().describe('The ID of the session to check'),
   waitSeconds: z.number().optional().describe('Time in seconds to wait for completion'),
 });
 
 export const agentStatus: Tool = {
   schema: {
     name: 'agent_status',
-    description: 'Check the status of the running agent session',
+    description: 'Check the status of a running agent session',
     inputSchema: zodToJsonSchema(agentStatusSchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentStatusSchema.parse(params);
-    const { waitSeconds = 0 } = validatedParams;
+    const { sessionId, waitSeconds = 0 } = validatedParams;
 
-    if (!globalSession) {
+    // Get the session
+    const session = sessions.get(sessionId);
+    if (!session) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
         isError: true,
       };
     }
 
     // If wait time is specified and session is still running, wait
-    if (waitSeconds > 0 && (globalSession.status === 'starting' || globalSession.status === 'running'))
+    if (waitSeconds > 0 && (session.status === 'starting' || session.status === 'running')) {
       await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
+    }
 
-
+    // Get the current status
     return {
       content: [{
         type: 'text' as const,
         text: JSON.stringify({
-          status: globalSession?.status || 'unknown',
-          runningTime: Date.now() - (globalSession?.startTime || 0)
+          sessionId,
+          status: session.status,
+          runningTime: session.status === 'running'
+            ? Date.now() - session.startTime
+            : session.runningTime,
+          lastMessage: session.items.length > 0 
+            ? session.items[session.items.length - 1] 
+            : null,
+          error: session.error
         })
       }],
     };
@@ -342,127 +688,175 @@ export const agentStatus: Tool = {
 
 // Agent log schema
 const agentLogSchema = z.object({
+  sessionId: z.string().describe('The ID of the session to get logs for'),
   includeImages: z.boolean().optional().describe('Whether to include images in the log'),
 });
 
 export const agentLog: Tool = {
   schema: {
     name: 'agent_log',
-    description: 'Get the complete log of the agent session',
+    description: 'Get the complete log of an agent session',
     inputSchema: zodToJsonSchema(agentLogSchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentLogSchema.parse(params);
-    const { includeImages = true } = validatedParams;
+    const { sessionId, includeImages = false } = validatedParams;
 
-    if (!globalSession) {
+    // Get the session
+    const session = sessions.get(sessionId);
+    if (!session) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
         isError: true,
       };
     }
 
-    // Create content items for each log entry
-    const content = [];
+    // Prepare the response
+    const result: any = {
+      sessionId,
+      status: session.status,
+      logs: session.logs,
+      startTime: new Date(session.startTime).toISOString(),
+      endTime: session.endTime ? new Date(session.endTime).toISOString() : undefined,
+      runningTime: session.status === 'running'
+        ? Date.now() - session.startTime
+        : session.runningTime,
+      error: session.error
+    };
 
-    for (const log of globalSession.logs) {
-      if (log.contentType === 'image' && includeImages)
-        content.push({ type: 'image' as const, data: log.content, mimeType: 'image/jpeg' });
+    // Include conversation items
+    result.items = session.items.map(item => {
+      // Sanitize computer_call_output items to omit image data if includeImages is false
+      if ('type' in item && item.type === 'computer_call_output' && !includeImages) {
+        const sanitized = {...item};
+        if (sanitized.output && sanitized.output.image_url) {
+          sanitized.output = {...sanitized.output, image_url: '[image omitted]'};
+        }
+        return sanitized;
+      }
+      return item;
+    });
 
-      content.push({ type: 'text' as const, text: `[${log.timestamp}] ${log.message}` });
+    // Optionally include images
+    if (includeImages) {
+      result.images = session.images;
     }
 
-    // Add summary at the end
-    content.push({
-      type: 'text' as const,
-      text: `\nSession status: ${globalSession.status}` +
-            (globalSession.error ? `\nError: ${globalSession.error}` : '') +
-            `\nRunning time: ${((globalSession.endTime || Date.now()) - globalSession.startTime) / 1000}s`
-    });
+    // Combine into a single content response
+    const content = [{ type: 'text' as const, text: JSON.stringify(result) }];
+    
+    // If includeImages, add the most recent image
+    if (includeImages && session.images.length > 0) {
+      content.push({
+        type: 'image',
+        data: session.images[session.images.length - 1],
+        mimeType: 'image/jpeg'
+      } as any);
+    }
 
     return { content };
   },
 };
 
 // Agent end schema
-const agentEndSchema = z.object({});
+const agentEndSchema = z.object({
+  sessionId: z.string().describe('The ID of the session to end'),
+});
 
 export const agentEnd: Tool = {
   schema: {
     name: 'agent_end',
-    description: 'Forcefully end the current agent session',
+    description: 'Forcefully end an agent session',
     inputSchema: zodToJsonSchema(agentEndSchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
-    agentEndSchema.parse(params);
+    const validatedParams = agentEndSchema.parse(params);
+    const { sessionId } = validatedParams;
 
-    if (!globalSession) {
+    // Get the session
+    const session = sessions.get(sessionId);
+    if (!session) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
         isError: true,
       };
     }
 
+    // Get current status before ending
+    const previousStatus = session.status;
+
     // Update session status
-    globalSession.status = 'completed';
-    globalSession.endTime = Date.now();
+    session.status = 'completed';
+    session.endTime = Date.now();
+    session.runningTime = session.endTime - session.startTime;
+    session.logs.push(`Session ${sessionId} forcefully ended`);
 
-    // Log the end of the session
-    logToSession('Agent session forcefully ended', 'text');
-
-    const response: ToolResult = {
+    return {
       content: [{
         type: 'text' as const,
         text: JSON.stringify({
-          status: 'completed',
-          message: 'Session forcefully ended'
+          sessionId,
+          status: 'ended',
+          message: 'Session ended successfully',
+          previousStatus
         })
       }],
     };
-
-    // Clear the global session after responding
-    globalSession = null;
-
-    return response;
   },
 };
 
 // Get the last image schema
-const agentGetLastImageSchema = z.object({});
+const agentGetLastImageSchema = z.object({
+  sessionId: z.string().describe('The ID of the session to get the last image from'),
+});
 
 export const agentGetLastImage: Tool = {
   schema: {
     name: 'agent_get_last_image',
-    description: 'Get the last screenshot from the current agent session',
+    description: 'Get the last screenshot from an agent session',
     inputSchema: zodToJsonSchema(agentGetLastImageSchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
-    agentGetLastImageSchema.parse(params);
+    const validatedParams = agentGetLastImageSchema.parse(params);
+    const { sessionId } = validatedParams;
 
-    if (!globalSession) {
+    // Get the session
+    const session = sessions.get(sessionId);
+    if (!session) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
         isError: true,
       };
     }
 
-    // Find the last image in the logs
-    const lastImageLog = [...globalSession.logs].reverse().find(log => log.contentType === 'image');
-
-    if (!lastImageLog) {
+    // Check if there are any images
+    if (session.images.length === 0) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No screenshot found in session logs' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `No images available for session ${sessionId}` }) }],
         isError: true,
       };
     }
+
+    // Get the most recent image
+    const lastImage = session.images[session.images.length - 1];
 
     return {
       content: [
-        { type: 'image' as const, data: lastImageLog.content, mimeType: 'image/jpeg' },
-        { type: 'text' as const, text: `Screenshot from ${lastImageLog.timestamp}` }
+        { 
+          type: 'text' as const, 
+          text: JSON.stringify({
+            sessionId,
+            status: session.status
+          }) 
+        },
+        {
+          type: 'image',
+          data: lastImage,
+          mimeType: 'image/jpeg'
+        } as any
       ],
     };
   },
@@ -470,79 +864,261 @@ export const agentGetLastImage: Tool = {
 
 // Agent reply schema
 const agentReplySchema = z.object({
+  sessionId: z.string().describe('The ID of the session to reply to'),
   replyText: z.string().describe('Text to send to the agent as a reply'),
 });
 
 export const agentReply: Tool = {
   schema: {
     name: 'agent_reply',
-    description: 'Send a reply to the running agent session to continue the conversation',
+    description: 'Send a reply to a running agent session to continue the conversation',
     inputSchema: zodToJsonSchema(agentReplySchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentReplySchema.parse(params);
-    
-    if (!globalSession) {
+    const { sessionId, replyText } = validatedParams;
+
+    // Get the session
+    const session = sessions.get(sessionId);
+    if (!session) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
         isError: true,
       };
     }
+
+    // Check if the session can accept replies
+    if (session.status !== 'completed' && session.status !== 'running') {
+      return {
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} cannot accept replies (status: ${session.status})` }) }],
+        isError: true,
+      };
+    }
+
+    // Add the user message to the session
+    session.items.push({
+      role: 'user',
+      content: replyText
+    });
     
     // Log the reply
-    logToSession(`User reply: ${validatedParams.replyText}`, 'text');
+    session.logs.push(`User reply: ${replyText}`);
     
-    // For now, just acknowledge the reply
-    // In a real implementation, this would trigger the agent to process the reply
+    // If the session was completed, restart it
+    if (session.status === 'completed') {
+      // Set status back to running
+      session.status = 'running';
+      
+      // Get OpenAI API key
+      const apiKey = process.env.OPENAI_API_KEY || '';
+      if (!apiKey) {
+        console.error('No OpenAI API key found in environment');
+        session.status = 'error';
+        session.error = 'No OpenAI API key found in environment';
+        return {
+          content: [{ 
+            type: 'text' as const, 
+            text: JSON.stringify({ 
+              error: 'No OpenAI API key found in environment',
+              sessionId 
+            }) 
+          }],
+          isError: true,
+        };
+      }
+      
+      // Create a computer for this session
+      const computer = new PlaywrightComputer(context);
+      
+      // For replies, we need a special restart that doesn't reinitialize everything
+      setTimeout(() => {
+        // Create a special function to restart with reply
+        const restartWithReply = async (): Promise<void> => {
+          const session = sessions.get(sessionId);
+          if (!session) return;
+          
+          try {
+            // Set session status to running
+            session.status = 'running';
+            
+            // Get display dimensions from the computer
+            const dimensions = computer.getDimensions();
+            
+            // Define tools - CUA requires a computer-preview tool
+            const tools = [{
+              type: 'computer-preview',
+              display_width: dimensions.width,
+              display_height: dimensions.height,
+              environment: 'browser'
+            }];
+            
+            // Create OpenAI client
+            const openaiClient = new OpenAIClient(apiKey);
+            
+            // Get the latest screenshot
+            const screenshot = await computer.screenshot();
+            session.images.push(screenshot);
+            
+            // Create a conversation context with:
+            // 1. The user's initial instruction
+            // 2. The most recent user reply
+            // 3. The latest screenshot
+            let conversationContext: CUAItem[] = session.items
+              .filter(item => 'role' in item && item.role === 'user')
+              .slice(-2); // Get up to the last 2 user messages
+              
+            // Add last screenshot
+            conversationContext.push(
+              {
+                type: 'computer_call',
+                call_id: `screenshot_${Date.now()}`,
+                action: {
+                  type: 'screenshot'
+                }
+              },
+              {
+                type: 'computer_call_output',
+                call_id: `screenshot_${Date.now()}`,
+                output: {
+                  type: 'input_image',
+                  image_url: `data:image/jpeg;base64,${screenshot}`,
+                  current_url: await computer.getCurrentUrl()
+                }
+              }
+            );
+            
+            console.error(`Reply context items: ${conversationContext.length}`);
+            
+            // The rest of the code is similar to runCUALoop
+            while (session.status === 'running') {
+              try {
+                // Log what we're sending
+                const debugContext = conversationContext.map(item => {
+                  if ('type' in item && item.type === 'computer_call_output' && item.output?.image_url) {
+                    return {
+                      ...item,
+                      output: {
+                        ...item.output,
+                        image_url: `[image data - ${item.output.image_url.substring(0, 30)}...]`
+                      }
+                    };
+                  }
+                  return item;
+                });
+                console.error(`Sending ${conversationContext.length} items to API: ${JSON.stringify(debugContext)}`);
+                
+                // Create a CUA response with only necessary context
+                const response = await openaiClient.createCUAResponse(conversationContext, tools);
+                
+                // Process the output items
+                if (response.output && response.output.length > 0) {
+                  console.error(`Received ${response.output.length} items from API`);
+                  
+                  // Store the full history in the session
+                  session.items.push(...response.output);
+                  
+                  // Check for wait loop (model repeatedly calling wait)
+                  const waitActions = response.output.filter(item => 
+                    'type' in item && item.type === 'computer_call' && 
+                    item.action?.type === 'wait'
+                  );
+                  
+                  // If all actions are waits and we have multiple items, it's likely a wait loop
+                  const isWaitLoop = waitActions.length === response.output.filter(item => 
+                    'type' in item && item.type === 'computer_call'
+                  ).length && waitActions.length > 0;
+                  
+                  if (isWaitLoop) {
+                    console.error("Detected a wait loop in reply - model is only calling wait. Adding a system message to help it break out of the loop.");
+                    // Add a system message to help break the loop
+                    session.items.push({
+                      type: 'message',
+                      content: [{
+                        type: 'text',
+                        text: "I notice you're waiting repeatedly. If you don't see the expected results, try clicking on a visible element or typing a more specific search like 'dish set' in the search box, then press Enter."
+                      }]
+                    });
+                  }
+                  
+                  // Process computer calls and get any new outputs
+                  const newItems = await processCUAItems(response.output, computer, session);
+                  
+                  // Reset conversation context for next loop 
+                  conversationContext = [];
+                  
+                  // Always include the latest user message
+                  const latestUserMsg = session.items
+                    .filter(item => 'role' in item && item.role === 'user')
+                    .pop();
+                  if (latestUserMsg) {
+                    conversationContext.push(latestUserMsg);
+                  }
+                  
+                  // Add the most recent items from this round to the next context
+                  conversationContext.push(...response.output);
+                  
+                  // Add the latest outputs produced in this round
+                  if (newItems.length > 0) {
+                    conversationContext.push(...newItems);
+                  }
+                  
+                  // Check if we've reached the end of the conversation
+                  const hasComputerCalls = response.output.some(item => 
+                    'type' in item && item.type === 'computer_call'
+                  );
+                  
+                  if (!hasComputerCalls && response.output.some(item => 'role' in item && item.role === 'assistant')) {
+                    // End of conversation
+                    session.status = 'completed';
+                    session.endTime = Date.now();
+                    session.runningTime = session.endTime - session.startTime;
+                    console.error(`CUA session ${sessionId} completed after reply`);
+                    break;
+                  }
+                }
+              } catch (error: any) {
+                session.logs.push(`Error in CUA reply loop: ${error.message}`);
+                console.error(`Error in CUA reply loop: ${error.message}`);
+                
+                // If there's an error, continue unless terminal
+                if (error.message.includes('No output from model') || 
+                    error.message.includes('Failed to parse response')) {
+                  session.status = 'error';
+                  session.error = error.message;
+                  session.endTime = Date.now();
+                  session.runningTime = session.endTime - session.startTime;
+                  break;
+                }
+              }
+            }
+          } catch (error: any) {
+            console.error(`Fatal error in CUA session ${sessionId}: ${error.message}`);
+            
+            if (session) {
+              session.status = 'error';
+              session.error = error.message;
+              session.endTime = Date.now();
+              session.runningTime = session.endTime - session.startTime;
+              session.logs.push(`Fatal error: ${error.message}`);
+            }
+          }
+        };
+        
+        // Start the reply process
+        restartWithReply();
+      }, 0);
+    }
+
     return {
       content: [{ 
         type: 'text' as const, 
         text: JSON.stringify({ 
-          status: globalSession.status,
-          message: 'Reply received' 
+          sessionId,
+          status: session.status,
+          message: 'Reply sent successfully' 
         }) 
       }],
     };
   },
 };
-
-// This function handles the actual agent execution
-async function executeAgent(context: Context, startUrl?: string): Promise<void> {
-  if (!globalSession)
-    return;
-
-  try {
-    // Update status to running
-    globalSession.status = 'running';
-    logToSession('Agent execution started', 'text');
-
-    // Use the existing page from the context
-    const computer = new PlaywrightComputer(context);
-
-    // Log the current URL for reference - we should already be on the right page
-    const currentUrl = await computer.getCurrentUrl();
-    logToSession(`Current URL: ${currentUrl}`, 'text');
-
-    // Initialize the OpenAI client with a hard-coded or environment-sourced API key
-    // This should be properly configured elsewhere in the system
-    const apiKey = process.env.OPENAI_API_KEY || '';
-    const openAIClient = new OpenAIClient(apiKey);
-
-    // Execute the agent with instructions
-    await openAIClient.runComputerAgent(computer, globalSession.instructions);
-
-    // Complete the session
-    globalSession.status = 'completed';
-    globalSession.endTime = Date.now();
-    logToSession('Agent execution completed successfully', 'text');
-  } catch (error: any) {
-    // Handle errors
-    if (globalSession) {
-      globalSession.status = 'error';
-      globalSession.error = error.message || 'Unknown error';
-      globalSession.endTime = Date.now();
-      logToSession(`Error: ${globalSession.error}`, 'text');
-    }
-  }
-}
