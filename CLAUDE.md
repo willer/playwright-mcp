@@ -1,0 +1,1 @@
+- Always use console.error, not console.log, so stdout MCP communications isn't polluted by the logs

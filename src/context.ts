@@ -152,10 +152,51 @@ export class Context {
   private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
     try {
       const browserType = this._options.browserName ? playwright[this._options.browserName] : playwright.chromium;
-      return await browserType.launchPersistentContext(this._options.userDataDir, this._options.launchOptions);
+      
+      // Set additional options for better reliability with persistent contexts
+      const launchOptions = {
+        ...this._options.launchOptions,
+        args: [
+          ...(this._options.launchOptions?.args || []),
+          '--no-sandbox',
+          // Completely disable background networking
+          '--disable-background-networking',
+          // Disable various background services
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          // Disable component updates to prevent background processes
+          '--disable-component-update',
+          // Disable various extensions and features that could cause conflicts
+          '--disable-extensions',
+          '--disable-features=TranslateUI',
+          // Disable first-run dialogs, welcome pages, etc.
+          '--no-first-run',
+        ],
+        handleSIGINT: true,  // Ensure browser process is properly cleaned up on SIGINT
+        handleSIGTERM: true, // Ensure browser process is properly cleaned up on SIGTERM
+        handleSIGHUP: true,  // Ensure browser process is properly cleaned up on SIGHUP
+      };
+      
+      // Playwright automatically adds the --user-data-dir argument, 
+      // so we filter out any user-data-dir flags if they exist to prevent duplicates
+      if (launchOptions.args) {
+        launchOptions.args = launchOptions.args.filter(arg => 
+          !arg.startsWith('--user-data-dir=') && 
+          !arg.startsWith('--user-data-dir-name=')
+        );
+      }
+      
+      // Launch the browser with persistent context
+      return await browserType.launchPersistentContext(this._options.userDataDir, launchOptions);
     } catch (error: any) {
       if (error.message.includes('Executable doesn\'t exist'))
         throw new Error(`Browser specified in your config is not installed. Either install it (likely) or change the config.`);
+      if (error.message.includes('Target page, context or browser has been closed')) {
+        console.error('Persistent context issue detected. This may be due to a stale browser process.');
+        console.error('Error details:', error.message);
+        throw new Error('Browser launch failed. Try removing the profile directory at: ' + this._options.userDataDir);
+      }
+      console.error('Failed to launch browser:', error);
       throw error;
     }
   }
