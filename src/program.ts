@@ -102,7 +102,7 @@ function setupExitWatchdog(serverList: ServerList) {
   // Share cleanup logic between different exit paths
   const cleanupAndExit = async (exitCode: number, reason: string) => {
     console.error(`Shutting down due to ${reason}...`);
-    
+
     // Kill any related browser processes that might be running
     if (process.platform === 'darwin' || process.platform === 'linux') {
       try {
@@ -115,13 +115,13 @@ function setupExitWatchdog(serverList: ServerList) {
         // Ignore any errors in the cleanup process
       }
     }
-    
+
     // Set a timeout to force exit if graceful shutdown takes too long
     const forceExitTimeout = setTimeout(() => {
       console.error('Forced exit after timeout');
       process.exit(exitCode);
     }, 5000);
-    
+
     try {
       // Try to close all servers gracefully
       await serverList.closeAll();
@@ -133,28 +133,28 @@ function setupExitWatchdog(serverList: ServerList) {
       process.exit(exitCode);
     }
   };
-  
+
   // Handle normal process exit
   process.stdin.on('close', async () => {
     await cleanupAndExit(0, 'stdin close');
   });
-  
+
   // Handle SIGINT (Ctrl+C)
   process.on('SIGINT', async () => {
     await cleanupAndExit(0, 'SIGINT');
   });
-  
+
   // Handle SIGTERM
   process.on('SIGTERM', async () => {
     await cleanupAndExit(0, 'SIGTERM');
   });
-  
+
   // Handle uncaught exceptions
-  process.on('uncaughtException', async (error) => {
+  process.on('uncaughtException', async error => {
     console.error('Uncaught exception:', error);
     await cleanupAndExit(1, 'uncaught exception');
   });
-  
+
   // Handle unhandled promise rejections
   process.on('unhandledRejection', async (reason, promise) => {
     console.error('Unhandled rejection at:', promise, 'reason:', reason);
@@ -174,40 +174,41 @@ async function createUserDataDir(browserName: 'chromium' | 'firefox' | 'webkit')
     cacheDirectory = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   else
     throw new Error('Unsupported platform: ' + process.platform);
-  
+
   // Create a consistent profile directory for persistence
   const result = path.join(cacheDirectory, 'ms-playwright', `mcp-${browserName}-profile`);
-  
+
   // Ensure directory exists
   await fs.promises.mkdir(result, { recursive: true });
-  
+
   // Check for lock files in the profile directory
   const potentialLockFiles = [
     'SingletonLock',
     'SingletonCookie',
     'SingletonSocket'
   ];
-  
+
   // Find other possible lock files
   const files = await fs.promises.readdir(result);
-  const lockFiles = files.filter(file => 
-    file.includes('Lock') || 
-    file.includes('Socket') || 
-    file.includes('Cookie') || 
+  const lockFiles = files.filter(file =>
+    file.includes('Lock') ||
+    file.includes('Socket') ||
+    file.includes('Cookie') ||
     (file.startsWith('.') && file.length > 10)
   );
-  
+
   // Add any discovered lock files to our list
   for (const file of lockFiles) {
-    if (!potentialLockFiles.includes(file)) {
+    if (!potentialLockFiles.includes(file))
       potentialLockFiles.push(file);
-    }
+
   }
-  
+
   // Helper to check if a process is running
   const isProcessRunning = async (pid: number): Promise<boolean> => {
-    if (isNaN(pid) || pid <= 0) return false;
-    
+    if (isNaN(pid) || pid <= 0)
+      return false;
+
     try {
       // On POSIX systems, sending signal 0 tests if process exists
       if (process.platform !== 'win32') {
@@ -228,26 +229,26 @@ async function createUserDataDir(browserName: 'chromium' | 'firefox' | 'webkit')
       return false; // Any error means the process is not accessible
     }
   };
-  
+
   // Handle each potential lock file
   for (const lockFile of potentialLockFiles) {
     try {
       const lockFilePath = path.join(result, lockFile);
-      
+
       // Check if the file exists
       await fs.promises.access(lockFilePath);
-      
+
       // For SingletonLock, check if it contains a valid PID
       if (lockFile === 'SingletonLock') {
         try {
           // Read the file to see if it contains a PID
           const content = await fs.promises.readFile(lockFilePath, 'utf8');
           const pidMatch = /^(\d+)$/.exec(content.trim());
-          
+
           if (pidMatch) {
             const pid = parseInt(pidMatch[1], 10);
             const processRunning = await isProcessRunning(pid);
-            
+
             if (!processRunning) {
               // PID exists in file but process is not running, safe to remove
               await fs.promises.unlink(lockFilePath);
@@ -274,7 +275,7 @@ async function createUserDataDir(browserName: 'chromium' | 'firefox' | 'webkit')
       // File doesn't exist or can't be accessed/removed - continue
     }
   }
-  
+
   return result;
 }
 

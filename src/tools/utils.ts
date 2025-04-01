@@ -112,14 +112,24 @@ export function sanitizeForFilePath(s: string) {
 }
 
 /**
- * Create a user data directory for persistent sessions
+ * Ensures a URL has a protocol prefix. If the URL doesn't start with http:// or https://, 
+ * https:// is added.
+ * @param url The URL to normalize
+ * @returns The URL with a protocol prefix
  */
+export function normalizeUrl(url: string): string {
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return 'https://' + url;
+  }
+  return url;
+}
+
 export async function createUserDataDir(): Promise<string> {
   // Import modules inside the function to avoid circular dependencies
   const fs = await import('fs/promises');
   const path = await import('path');
   const os = await import('os');
-  
+
   let cacheDirectory: string;
   if (process.platform === 'linux')
     cacheDirectory = process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
@@ -129,7 +139,7 @@ export async function createUserDataDir(): Promise<string> {
     cacheDirectory = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
   else
     throw new Error('Unsupported platform: ' + process.platform);
-  
+
   const result = path.join(cacheDirectory, 'ms-playwright', 'mcp-chrome-profile');
   await fs.mkdir(result, { recursive: true });
   return result;

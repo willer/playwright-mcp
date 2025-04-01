@@ -152,7 +152,7 @@ export class Context {
   private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
     try {
       const browserType = this._options.browserName ? playwright[this._options.browserName] : playwright.chromium;
-      
+
       // Set additional options for better reliability with persistent contexts
       const launchOptions = {
         ...this._options.launchOptions,
@@ -176,16 +176,16 @@ export class Context {
         handleSIGTERM: true, // Ensure browser process is properly cleaned up on SIGTERM
         handleSIGHUP: true,  // Ensure browser process is properly cleaned up on SIGHUP
       };
-      
-      // Playwright automatically adds the --user-data-dir argument, 
+
+      // Playwright automatically adds the --user-data-dir argument,
       // so we filter out any user-data-dir flags if they exist to prevent duplicates
       if (launchOptions.args) {
-        launchOptions.args = launchOptions.args.filter(arg => 
-          !arg.startsWith('--user-data-dir=') && 
+        launchOptions.args = launchOptions.args.filter(arg =>
+          !arg.startsWith('--user-data-dir=') &&
           !arg.startsWith('--user-data-dir-name=')
         );
       }
-      
+
       // Launch the browser with persistent context
       return await browserType.launchPersistentContext(this._options.userDataDir, launchOptions);
     } catch (error: any) {

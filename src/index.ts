@@ -41,6 +41,8 @@ const cuaTools: Tool[] = [
   cua.agentStatus,
   cua.agentLog,
   cua.agentEnd,
+  cua.agentGetLastImage,
+  cua.agentReply,
 ];
 
 const snapshotTools: Tool[] = [
@@ -55,7 +57,6 @@ const snapshotTools: Tool[] = [
   snapshot.selectOption,
   snapshot.screenshot,
   ...commonTools,
-  ...registerAgentTools(),
 ];
 
 const screenshotTools: Tool[] = [
@@ -69,7 +70,6 @@ const screenshotTools: Tool[] = [
   screenshot.drag,
   screenshot.type,
   ...commonTools,
-  ...registerAgentTools(),
 ];
 
 const resources: Resource[] = [];
@@ -86,9 +86,9 @@ const packageJSON = require('../package.json');
 
 export function createServer(options?: Options): Server {
   const baseTools = options?.vision ? screenshotTools : snapshotTools;
-  // CUA tools are disabled in this version
-  const tools = [...baseTools];
-  
+  // Include our custom CUA tools instead of the ones from agent-tools.ts
+  const tools = [...baseTools, ...cuaTools];
+
   return createServerWithTools({
     name: 'Playwright',
     version: packageJSON.version,

@@ -20,7 +20,7 @@ import path from 'path';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-import { captureAriaSnapshot, runAndWait, sanitizeForFilePath } from './utils';
+import { captureAriaSnapshot, runAndWait, sanitizeForFilePath, normalizeUrl } from './utils';
 
 import type { ToolFactory, Tool } from './tool';
 
@@ -36,8 +36,9 @@ export const navigate: ToolFactory = snapshot => ({
   },
   handle: async (context, params) => {
     const validatedParams = navigateSchema.parse(params);
+    const normalizedUrl = normalizeUrl(validatedParams.url);
     const page = await context.createPage();
-    await page.goto(validatedParams.url, { waitUntil: 'domcontentloaded' });
+    await page.goto(normalizedUrl, { waitUntil: 'domcontentloaded' });
     // Cap load event to 5 seconds, the page is operational at this point.
     await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
     if (snapshot)
@@ -45,7 +46,7 @@ export const navigate: ToolFactory = snapshot => ({
     return {
       content: [{
         type: 'text',
-        text: `Navigated to ${validatedParams.url}`,
+        text: `Navigated to ${normalizedUrl}`,
       }],
     };
   },

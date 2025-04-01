@@ -1,3 +1,18 @@
+/**
+ * Copyright (c) Microsoft Corporation.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 import { Tool, ToolResult } from './tool';
 import { BrowserContext } from 'playwright';
 import { AgentManager } from './agent';
@@ -20,10 +35,10 @@ async function getOrCreateStorageState(userDataDir: string): Promise<any> {
   // Import modules inside the function to avoid circular dependencies
   const fs = await import('fs/promises');
   const path = await import('path');
-  
+
   // Path to the storage state file
   const storageStatePath = path.join(userDataDir, 'storage-state.json');
-  
+
   try {
     // Try to read existing storage state
     const storageStateContent = await fs.readFile(storageStatePath, 'utf-8');
@@ -34,10 +49,10 @@ async function getOrCreateStorageState(userDataDir: string): Promise<any> {
       cookies: [],
       origins: []
     };
-    
+
     // Save it to the file for future use
     await fs.writeFile(storageStatePath, JSON.stringify(emptyStorageState, null, 2));
-    
+
     return emptyStorageState;
   }
 }
@@ -65,33 +80,33 @@ export const agentStart: Tool = {
         isError: true
       };
     }
-    if (!agentManager) {
+    if (!agentManager)
       throw new Error('Agent manager not initialized. Please set the OPENAI_API_KEY environment variable.');
-    }
-    
+
+
     const { instructions } = params;
-    
+
     // Get start URL from parameters or extract from instructions
     let startUrl = params.startUrl || 'https://www.bing.com';
-    
+
     // If no start URL provided, try to extract it from instructions
     if (!params.startUrl) {
       const urlMatch = instructions.match(/https?:\/\/[^\s)]+/);
-      if (urlMatch) {
+      if (urlMatch)
         startUrl = urlMatch[0];
-      }
+
     }
-    
+
     // Create user data directory for persistent sessions
     const userDataDir = await createUserDataDir();
     console.error(`[DEBUG] Using user data directory: ${userDataDir}`);
-    
+
     // Launch Chromium with persistent user data
-    const browser = await chromium.launch({ 
+    const browser = await chromium.launch({
       headless: false,
       // No channel specified = use Chromium
     });
-    
+
     // Create a browser context with the user data directory
     // This will preserve sessions, cookies, etc. across runs
     const browserContext = await browser.newContext({
@@ -99,10 +114,10 @@ export const agentStart: Tool = {
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       storageState: await getOrCreateStorageState(userDataDir)
     });
-    
+
     // Start the session
     const sessionId = await agentManager.startSession(browserContext, startUrl, instructions);
-    
+
     return {
       content: [{ type: 'text', text: JSON.stringify({
         sessionId,
@@ -136,27 +151,27 @@ export const agentStatus: Tool = {
         isError: true
       };
     }
-    if (!agentManager) {
+    if (!agentManager)
       throw new Error('Agent manager not initialized');
-    }
-    
+
+
     const { sessionId, waitSeconds } = params;
-    
+
     // If waitSeconds is specified, wait for completion or timeout
     if (waitSeconds) {
       const maxWaitTime = waitSeconds * 1000;
       const startTime = Date.now();
-      
+
       while (Date.now() - startTime < maxWaitTime) {
         const session = agentManager.getSession(sessionId);
-        
+
         if (!session) {
           return {
             content: [{ type: 'text', text: `Session ${sessionId} not found` }],
             isError: true
           };
         }
-        
+
         // If the session is completed or errored, return the status
         if (session.status !== 'running') {
           return {
@@ -169,11 +184,11 @@ export const agentStatus: Tool = {
             }) }]
           };
         }
-        
+
         // Wait a bit before checking again
         await new Promise(resolve => setTimeout(resolve, 500));
       }
-      
+
       // If we get here, we timed out
       const timeoutSession = agentManager.getSession(sessionId);
       if (!timeoutSession) {
@@ -182,7 +197,7 @@ export const agentStatus: Tool = {
           isError: true
         };
       }
-      
+
       return {
         content: [{ type: 'text', text: JSON.stringify({
           sessionId,
@@ -192,26 +207,26 @@ export const agentStatus: Tool = {
         }) }]
       };
     }
-    
+
     // If no waitSeconds, just return the current status
     const session = agentManager.getSession(sessionId);
-    
+
     if (!session) {
       return {
         content: [{ type: 'text', text: `Session ${sessionId} not found` }],
         isError: true
       };
     }
-    
+
     return {
       content: [{ type: 'text', text: JSON.stringify({
         sessionId,
         status: session.status,
-        timeElapsed: session.status === 'running' 
-          ? Date.now() - session.startTime 
+        timeElapsed: session.status === 'running'
+          ? Date.now() - session.startTime
           : session.runningTime,
-        message: session.status === 'running' 
-          ? 'Session is running' 
+        message: session.status === 'running'
+          ? 'Session is running'
           : 'Session has completed',
         error: session.error
       }) }]
@@ -242,37 +257,37 @@ export const agentLog: Tool = {
         isError: true
       };
     }
-    if (!agentManager) {
+    if (!agentManager)
       throw new Error('Agent manager not initialized');
-    }
-    
+
+
     const { sessionId, includeImages = false } = params;
-    
+
     const session = agentManager.getSession(sessionId);
-    
+
     if (!session) {
       return {
         content: [{ type: 'text', text: `Session ${sessionId} not found` }],
         isError: true
       };
     }
-    
+
     const result: any = {
       sessionId,
       status: session.status,
       logs: session.logs,
       startTime: new Date(session.startTime).toISOString(),
       endTime: session.endTime ? new Date(session.endTime).toISOString() : undefined,
-      runningTime: session.status === 'running' 
-        ? Date.now() - session.startTime 
+      runningTime: session.status === 'running'
+        ? Date.now() - session.startTime
         : session.runningTime,
       error: session.error
     };
-    
-    if (includeImages) {
+
+    if (includeImages)
       result.images = session.images;
-    }
-    
+
+
     return {
       content: [{ type: 'text', text: JSON.stringify(result) }]
     };
@@ -301,13 +316,13 @@ export const agentEnd: Tool = {
         isError: true
       };
     }
-    if (!agentManager) {
+    if (!agentManager)
       throw new Error('Agent manager not initialized');
-    }
-    
+
+
     const { sessionId } = params;
     console.error(`[DEBUG] Ending session ${sessionId}`);
-    
+
     // Get session before ending
     const sessionBefore = agentManager.getSession(sessionId);
     if (!sessionBefore) {
@@ -316,19 +331,19 @@ export const agentEnd: Tool = {
         isError: true
       };
     }
-    
+
     console.error(`[DEBUG] Current session status: ${sessionBefore.status}`);
-    
+
     // Force the session to end (regardless of current status)
     const success = await agentManager.endSession(sessionId);
-    
+
     if (!success) {
       return {
         content: [{ type: 'text', text: `Failed to end session ${sessionId}` }],
         isError: true
       };
     }
-    
+
     return {
       content: [{ type: 'text', text: JSON.stringify({
         sessionId,
@@ -362,38 +377,38 @@ export const agentGetLastImage: Tool = {
         isError: true
       };
     }
-    if (!agentManager) {
+    if (!agentManager)
       throw new Error('Agent manager not initialized');
-    }
-    
+
+
     const { sessionId } = params;
-    
+
     const session = agentManager.getSession(sessionId);
-    
+
     if (!session) {
       return {
         content: [{ type: 'text', text: `Session ${sessionId} not found` }],
         isError: true
       };
     }
-    
+
     if (session.images.length === 0) {
       return {
         content: [{ type: 'text', text: `No images available for session ${sessionId}` }],
         isError: true
       };
     }
-    
+
     const lastImage = session.images[session.images.length - 1];
-    
+
     return {
       content: [
         { type: 'text', text: JSON.stringify({
           sessionId,
           status: session.status
         }) },
-        { 
-          type: 'image', 
+        {
+          type: 'image',
           data: lastImage,
           mimeType: 'image/jpeg'
         }
@@ -425,13 +440,13 @@ export const agentReply: Tool = {
         isError: true
       };
     }
-    if (!agentManager) {
+    if (!agentManager)
       throw new Error('Agent manager not initialized');
-    }
-    
+
+
     const { sessionId, replyText } = params;
     console.error(`[DEBUG] Sending reply to session ${sessionId}: "${replyText}"`);
-    
+
     // Get the session before sending the reply
     const sessionBefore = agentManager.getSession(sessionId);
     if (!sessionBefore) {
@@ -440,7 +455,7 @@ export const agentReply: Tool = {
         isError: true
       };
     }
-    
+
     // Sessions in 'completed' status are waiting for more input
     // Sessions in 'running' status can technically accept input too (though that's unusual)
     if (sessionBefore.status !== 'completed' && sessionBefore.status !== 'running') {
@@ -449,20 +464,20 @@ export const agentReply: Tool = {
         isError: true
       };
     }
-    
+
     // Send the reply
     const success = await agentManager.sendReply(sessionId, replyText);
-    
+
     if (!success) {
       return {
         content: [{ type: 'text', text: `Failed to send reply to session ${sessionId}` }],
         isError: true
       };
     }
-    
+
     // Get the session again to check its status
     const sessionAfter = agentManager.getSession(sessionId);
-    
+
     return {
       content: [{ type: 'text', text: JSON.stringify({
         sessionId,
