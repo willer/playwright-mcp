@@ -80,8 +80,8 @@ const packageJSON = require('../package.json');
 
 export function createServer(options?: Options): Server {
   const baseTools = options?.vision ? screenshotTools : snapshotTools;
-  // Always include the CUA tools
-  const tools = [...baseTools, ...cuaTools];
+  // CUA tools are disabled in this version
+  const tools = [...baseTools];
   
   return createServerWithTools({
     name: 'Playwright',
