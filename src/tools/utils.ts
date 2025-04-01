@@ -110,3 +110,27 @@ export async function captureAriaSnapshot(context: Context, status: string = '')
 export function sanitizeForFilePath(s: string) {
   return s.replace(/[\x00-\x2C\x2E-\x2F\x3A-\x40\x5B-\x60\x7B-\x7F]+/g, '-');
 }
+
+/**
+ * Create a user data directory for persistent sessions
+ */
+export async function createUserDataDir(): Promise<string> {
+  // Import modules inside the function to avoid circular dependencies
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  const os = await import('os');
+  
+  let cacheDirectory: string;
+  if (process.platform === 'linux')
+    cacheDirectory = process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
+  else if (process.platform === 'darwin')
+    cacheDirectory = path.join(os.homedir(), 'Library', 'Caches');
+  else if (process.platform === 'win32')
+    cacheDirectory = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
+  else
+    throw new Error('Unsupported platform: ' + process.platform);
+  
+  const result = path.join(cacheDirectory, 'ms-playwright', 'mcp-chrome-profile');
+  await fs.mkdir(result, { recursive: true });
+  return result;
+}

@@ -3,6 +3,7 @@ import { BrowserContext } from 'playwright';
 import fetch from 'node-fetch';
 import { PlaywrightComputer } from './computer';
 import { BLOCKED_DOMAINS } from './blocked-domains';
+import { createUserDataDir } from './utils';
 
 /**
  * Session information type
@@ -93,8 +94,21 @@ export class AgentManager {
     session.endTime = Date.now();
     session.runningTime = session.endTime - session.startTime;
     
-    // Close the computer
+    // Close the computer, but save storage state first if possible
     try {
+      // Try to save the storage state before closing
+      const context = session.computer.getBrowserContext();
+      const userDataDir = await createUserDataDir();
+      if (context) {
+        const storageState = await context.storageState();
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const storageStatePath = path.join(userDataDir, 'storage-state.json');
+        await fs.writeFile(storageStatePath, JSON.stringify(storageState, null, 2));
+        console.error(`[DEBUG] Saved storage state to ${storageStatePath}`);
+      }
+      
+      // Now close the browser
       await session.computer.close();
     } catch (error) {
       console.error(`Error closing computer for session ${sessionId}:`, error);
@@ -202,8 +216,15 @@ export class AgentManager {
             
             session.logs.push(`${actionType}(${JSON.stringify(actionArgs)})`);
             
-            // Execute the action on the computer
-            await (computer as any)[actionType](...Object.values(actionArgs));
+            // Execute the action on the computer with better error handling
+            try {
+              console.error(`[DEBUG] Executing action: ${actionType} with args:`, JSON.stringify(actionArgs));
+              await (computer as any)[actionType](...Object.values(actionArgs));
+            } catch (error) {
+              console.error(`[ERROR] Failed to execute action ${actionType}:`, error);
+              console.error(`[ERROR] Action arguments:`, JSON.stringify(actionArgs));
+              throw error;
+            }
             
             // Take screenshot
             const screenshot = await computer.screenshot();

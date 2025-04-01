@@ -75,28 +75,48 @@ export class PlaywrightComputer {
   /**
    * Click at specific coordinates on the page
    */
-  async click(x: number, y: number, button: string = 'left'): Promise<void> {
+  async click(x: number | string, y: number | string, button: string = 'left'): Promise<void> {
     if (!this.page) {
       throw new Error('No active page');
     }
+    
+    // Convert coordinates to numbers if they're strings
+    const xCoord = typeof x === 'string' ? parseInt(x, 10) : x;
+    const yCoord = typeof y === 'string' ? parseInt(y, 10) : y;
+    
+    // Check if conversions were successful
+    if (isNaN(xCoord) || isNaN(yCoord)) {
+      throw new Error(`Invalid coordinates: x=${x}, y=${y}`);
+    }
+    
     if (button === 'back') {
       await this.page.goBack();
     } else if (button === 'forward') {
       await this.page.goForward();
     } else {
       const buttonType = button === 'right' ? 'right' : 'left';
-      await this.page.mouse.click(x, y, { button: buttonType as 'left' | 'right' | 'middle' });
+      await this.page.mouse.click(xCoord, yCoord, { button: buttonType as 'left' | 'right' | 'middle' });
     }
   }
 
   /**
    * Double-click at specific coordinates on the page
    */
-  async doubleClick(x: number, y: number): Promise<void> {
+  async doubleClick(x: number | string, y: number | string): Promise<void> {
     if (!this.page) {
       throw new Error('No active page');
     }
-    await this.page.mouse.dblclick(x, y);
+    
+    // Convert coordinates to numbers if they're strings
+    const xCoord = typeof x === 'string' ? parseInt(x, 10) : x;
+    const yCoord = typeof y === 'string' ? parseInt(y, 10) : y;
+    
+    // Check if conversions were successful
+    if (isNaN(xCoord) || isNaN(yCoord)) {
+      throw new Error(`Invalid coordinates: x=${x}, y=${y}`);
+    }
+    
+    await this.page.mouse.dblclick(xCoord, yCoord);
   }
 
   /**
@@ -122,41 +142,83 @@ export class PlaywrightComputer {
   /**
    * Wait for the specified number of milliseconds
    */
-  async wait(ms: number): Promise<void> {
-    await new Promise(resolve => setTimeout(resolve, ms));
+  async wait(ms: number | string): Promise<void> {
+    // Convert ms to number if it's a string
+    const milliseconds = typeof ms === 'string' ? parseInt(ms, 10) : ms;
+    
+    // Check if conversion was successful
+    if (isNaN(milliseconds)) {
+      throw new Error(`Invalid wait time: ${ms}`);
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, milliseconds));
   }
 
   /**
    * Scroll the page from a point by a delta amount
    */
-  async scroll(x: number, y: number, deltaX: number, deltaY: number): Promise<void> {
+  async scroll(x: number | string, y: number | string, deltaX: number | string, deltaY: number | string): Promise<void> {
     if (!this.page) {
       throw new Error('No active page');
     }
-    await this.page.mouse.move(x, y);
-    await this.page.evaluate(`window.scrollBy(${deltaX}, ${deltaY})`);
+    
+    // Convert coordinates to numbers if they're strings
+    const xCoord = typeof x === 'string' ? parseInt(x, 10) : x;
+    const yCoord = typeof y === 'string' ? parseInt(y, 10) : y;
+    const dX = typeof deltaX === 'string' ? parseInt(deltaX, 10) : deltaX;
+    const dY = typeof deltaY === 'string' ? parseInt(deltaY, 10) : deltaY;
+    
+    // Check if conversions were successful
+    if (isNaN(xCoord) || isNaN(yCoord) || isNaN(dX) || isNaN(dY)) {
+      throw new Error(`Invalid coordinates or delta: x=${x}, y=${y}, deltaX=${deltaX}, deltaY=${deltaY}`);
+    }
+    
+    await this.page.mouse.move(xCoord, yCoord);
+    await this.page.evaluate(`window.scrollBy(${dX}, ${dY})`);
   }
 
   /**
    * Move the mouse to specific coordinates
    */
-  async move(x: number, y: number): Promise<void> {
+  async move(x: number | string, y: number | string): Promise<void> {
     if (!this.page) {
       throw new Error('No active page');
     }
-    await this.page.mouse.move(x, y);
+    
+    // Convert coordinates to numbers if they're strings
+    const xCoord = typeof x === 'string' ? parseInt(x, 10) : x;
+    const yCoord = typeof y === 'string' ? parseInt(y, 10) : y;
+    
+    // Check if conversions were successful
+    if (isNaN(xCoord) || isNaN(yCoord)) {
+      throw new Error(`Invalid coordinates: x=${x}, y=${y}`);
+    }
+    
+    await this.page.mouse.move(xCoord, yCoord);
   }
 
   /**
    * Drag from one point to another
    */
-  async drag(startX: number, startY: number, endX: number, endY: number): Promise<void> {
+  async drag(startX: number | string, startY: number | string, endX: number | string, endY: number | string): Promise<void> {
     if (!this.page) {
       throw new Error('No active page');
     }
-    await this.page.mouse.move(startX, startY);
+    
+    // Convert coordinates to numbers if they're strings
+    const sX = typeof startX === 'string' ? parseInt(startX, 10) : startX;
+    const sY = typeof startY === 'string' ? parseInt(startY, 10) : startY;
+    const eX = typeof endX === 'string' ? parseInt(endX, 10) : endX;
+    const eY = typeof endY === 'string' ? parseInt(endY, 10) : endY;
+    
+    // Check if conversions were successful
+    if (isNaN(sX) || isNaN(sY) || isNaN(eX) || isNaN(eY)) {
+      throw new Error(`Invalid coordinates: startX=${startX}, startY=${startY}, endX=${endX}, endY=${endY}`);
+    }
+    
+    await this.page.mouse.move(sX, sY);
     await this.page.mouse.down();
-    await this.page.mouse.move(endX, endY);
+    await this.page.mouse.move(eX, eY);
     await this.page.mouse.up();
   }
 
@@ -208,6 +270,13 @@ export class PlaywrightComputer {
     };
   }
 
+  /**
+   * Get the browser context
+   */
+  getBrowserContext(): BrowserContext | null {
+    return this.context;
+  }
+  
   /**
    * Close the browser
    */

@@ -3,6 +3,7 @@ import { BrowserContext } from 'playwright';
 import { AgentManager } from './agent';
 import { chromium } from 'playwright';
 import { Context } from '../context';
+import { createUserDataDir } from './utils';
 
 // Initialize the agent manager
 let agentManager: AgentManager;
@@ -10,6 +11,35 @@ let agentManager: AgentManager;
 // Initialize the agent manager with the API key
 export function initializeAgentManager(apiKey: string): void {
   agentManager = new AgentManager(apiKey);
+}
+
+/**
+ * Get or create storage state for persistent sessions
+ */
+async function getOrCreateStorageState(userDataDir: string): Promise<any> {
+  // Import modules inside the function to avoid circular dependencies
+  const fs = await import('fs/promises');
+  const path = await import('path');
+  
+  // Path to the storage state file
+  const storageStatePath = path.join(userDataDir, 'storage-state.json');
+  
+  try {
+    // Try to read existing storage state
+    const storageStateContent = await fs.readFile(storageStatePath, 'utf-8');
+    return JSON.parse(storageStateContent);
+  } catch (error) {
+    // If the file doesn't exist, create a new empty storage state
+    const emptyStorageState = {
+      cookies: [],
+      origins: []
+    };
+    
+    // Save it to the file for future use
+    await fs.writeFile(storageStatePath, JSON.stringify(emptyStorageState, null, 2));
+    
+    return emptyStorageState;
+  }
 }
 
 /**
@@ -52,12 +82,22 @@ export const agentStart: Tool = {
       }
     }
     
-    // Launch a new browser context - NOT headless so user can see what's happening
+    // Create user data directory for persistent sessions
+    const userDataDir = await createUserDataDir();
+    console.error(`[DEBUG] Using user data directory: ${userDataDir}`);
+    
+    // Launch Chromium with persistent user data
     const browser = await chromium.launch({ 
-      headless: false 
+      headless: false,
+      // No channel specified = use Chromium
     });
+    
+    // Create a browser context with the user data directory
+    // This will preserve sessions, cookies, etc. across runs
     const browserContext = await browser.newContext({
-      viewport: { width: 1024, height: 768 }
+      viewport: { width: 1024, height: 768 },
+      userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      storageState: await getOrCreateStorageState(userDataDir)
     });
     
     // Start the session

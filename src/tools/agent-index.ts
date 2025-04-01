@@ -28,3 +28,4 @@ export const agentTools: Tool[] = [
 export function registerAgentTools(): Tool[] {
   return agentTools;
 }
+
