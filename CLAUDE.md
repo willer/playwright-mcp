@@ -1,1 +1,2 @@
 - Always use console.error, not console.log, so stdout MCP communications isn't polluted by the logs
+- to test this, we use the MCP inspector: npx @modelcontextprotocol/inspector node cli.js
