@@ -10,9 +10,8 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 // Initialize agent manager if OpenAI API key is available
 if (OPENAI_API_KEY) {
   initializeAgentManager(OPENAI_API_KEY);
-} else {
-  console.error('[WARN] OPENAI_API_KEY environment variable not found. CUA tools will not function properly.');
 }
+// No warning message - the tools will just be non-functional if key isn't available
 
 // Export all CUA tools
 export const agentTools: Tool[] = [

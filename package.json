@@ -21,7 +21,8 @@
     "test": "playwright test",
     "clean": "rm -rf lib",
     "prepare": "npm run build",
-    "npm-publish": "npm run clean && npm run build && npm run test && npm publish"
+    "npm-publish": "npm run clean && npm run build && npm run test && npm publish",
+    "inspect": "npm run build && npx @modelcontextprotocol/inspector node cli.js"
   },
   "exports": {
     "./package.json": "./package.json",
