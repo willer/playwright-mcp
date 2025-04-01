@@ -139,9 +139,9 @@ async function startSSEServer(port: number, serverList: ServerList) {
         resolvedHost = 'localhost';
       url = `http://${resolvedHost}:${resolvedPort}`;
     }
-    console.log(`Listening on ${url}`);
-    console.log('Put this in your client config:');
-    console.log(JSON.stringify({
+    console.error(`Listening on ${url}`);
+    console.error('Put this in your client config:');
+    console.error(JSON.stringify({
       'mcpServers': {
         'playwright': {
           'url': `${url}/sse`

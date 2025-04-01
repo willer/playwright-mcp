@@ -7,6 +7,7 @@ A Model Context Protocol (MCP) server that provides browser automation capabilit
 - **Fast and lightweight**: Uses Playwright's accessibility tree, not pixel-based input.
 - **LLM-friendly**: No vision models needed, operates purely on structured data.
 - **Deterministic tool application**: Avoids ambiguity common with screenshot-based approaches.
+- **Computer Use Agent (CUA)**: Supports high-level agent-based browser automation.
 
 ### Use Cases
 
@@ -14,6 +15,7 @@ A Model Context Protocol (MCP) server that provides browser automation capabilit
 - Data extraction from structured content
 - Automated testing driven by LLMs
 - General-purpose browser interaction for agents
+- Long-running browser automation with Computer Use Agent (CUA)
 
 ### Example config
 
@@ -305,3 +307,44 @@ Vision Mode provides tools for visual-based interactions using screenshots. Here
 - **browser_close**
   - Description: Close the page
   - Parameters: None
+
+### Computer Use Agent (CUA) Mode
+
+The Playwright MCP also provides a Computer Use Agent (CUA) implementation for high-level, agent-based browser automation. The CUA mode allows for long-running browser sessions controlled by an AI agent.
+
+To use CUA mode, you need to set your OpenAI API key in the `.env` file (see `.env.example`).
+
+#### CUA Tools
+
+- **agent_start**
+  - Description: Start a new agent session with given instructions
+  - Parameters:
+    - `instructions` (string, required): The instructions for the agent to follow
+
+- **agent_status**
+  - Description: Check the status of a running agent session
+  - Parameters:
+    - `sessionId` (string, required): Session ID returned from agent_start
+    - `waitSeconds` (number, optional): Time in seconds to wait for completion
+
+- **agent_log**
+  - Description: Get the complete log of an agent session
+  - Parameters:
+    - `sessionId` (string, required): Session ID returned from agent_start
+    - `includeImages` (boolean, optional): Whether to include images in the log
+
+- **agent_end**
+  - Description: Forcefully end an agent session
+  - Parameters:
+    - `sessionId` (string, required): Session ID returned from agent_start
+
+- **agent_get_last_image**
+  - Description: Get the last screenshot from an agent session
+  - Parameters:
+    - `sessionId` (string, required): Session ID returned from agent_start
+
+- **agent_reply**
+  - Description: Send a reply to a running agent session to continue the conversation
+  - Parameters:
+    - `sessionId` (string, required): Session ID returned from agent_start
+    - `replyText` (string, required): The reply to send to the agent

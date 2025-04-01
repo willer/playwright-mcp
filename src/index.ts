@@ -19,6 +19,7 @@ import * as snapshot from './tools/snapshot';
 import * as common from './tools/common';
 import * as screenshot from './tools/screenshot';
 import { console } from './resources/console';
+import { registerAgentTools } from './tools/agent-index';
 
 import type { Tool } from './tools/tool';
 import type { Resource } from './resources/resource';
@@ -45,6 +46,7 @@ const snapshotTools: Tool[] = [
   snapshot.selectOption,
   snapshot.screenshot,
   ...commonTools,
+  ...registerAgentTools(),
 ];
 
 const screenshotTools: Tool[] = [
@@ -58,6 +60,7 @@ const screenshotTools: Tool[] = [
   screenshot.drag,
   screenshot.type,
   ...commonTools,
+  ...registerAgentTools(),
 ];
 
 const resources: Resource[] = [
