@@ -18,8 +18,9 @@ import { createServerWithTools } from './server';
 import * as snapshot from './tools/snapshot';
 import * as common from './tools/common';
 import * as screenshot from './tools/screenshot';
-import { console } from './resources/console';
 import { registerAgentTools } from './tools/agent-index';
+import * as cua from './tools/cua';
+import { console } from './tools/console';
 
 import type { Tool } from './tools/tool';
 import type { Resource } from './resources/resource';
@@ -32,6 +33,14 @@ const commonTools: Tool[] = [
   common.pdf,
   common.close,
   common.install,
+  console,
+];
+
+const cuaTools: Tool[] = [
+  cua.agentStart,
+  cua.agentStatus,
+  cua.agentLog,
+  cua.agentEnd,
 ];
 
 const snapshotTools: Tool[] = [
@@ -63,11 +72,10 @@ const screenshotTools: Tool[] = [
   ...registerAgentTools(),
 ];
 
-const resources: Resource[] = [
-  console,
-];
+const resources: Resource[] = [];
 
 type Options = {
+  browserName?: 'chromium' | 'firefox' | 'webkit';
   userDataDir?: string;
   launchOptions?: LaunchOptions;
   cdpEndpoint?: string;
@@ -77,12 +85,16 @@ type Options = {
 const packageJSON = require('../package.json');
 
 export function createServer(options?: Options): Server {
-  const tools = options?.vision ? screenshotTools : snapshotTools;
+  const baseTools = options?.vision ? screenshotTools : snapshotTools;
+  // CUA tools are disabled in this version
+  const tools = [...baseTools];
+  
   return createServerWithTools({
     name: 'Playwright',
     version: packageJSON.version,
     tools,
     resources,
+    browserName: options?.browserName,
     userDataDir: options?.userDataDir ?? '',
     launchOptions: options?.launchOptions,
     cdpEndpoint: options?.cdpEndpoint,

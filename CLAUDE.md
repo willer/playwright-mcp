@@ -24,3 +24,6 @@
 - Maintain proper session management and cleanup for browser resources
 - Follow the communication flow defined in CUA_INTERFACE.md
 - Ensure all API calls have proper error handling and timeouts
+
+- Always use console.error, not console.log, so stdout MCP communications isn't polluted by the logs
+- to test this, we use the MCP inspector: npx @modelcontextprotocol/inspector node cli.js
