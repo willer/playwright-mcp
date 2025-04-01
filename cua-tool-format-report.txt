@@ -1,0 +1,68 @@
+
+CUA Tool Format Test Results:
+---------------------------------------------------------
+Handles 'tool_call' type: ✅ YES
+Handles function name 'computer': ✅ YES
+Handles 'tool_result' type: ✅ YES
+Parses function arguments: ✅ YES
+Uses function-based tools format: ✅ YES
+Has name field at tools[0] level: ✅ YES
+---------------------------------------------------------
+
+This test validates that our CUA implementation correctly:
+1. Uses the proper function-based API format for sending requests
+2. Can handle 'tool_call' responses from the OpenAI API
+3. Properly parses function arguments to execute computer actions
+4. Returns the correct 'tool_result' format back to the API
+
+Example of correct OpenAI API request:
+{
+  "model": "computer-use-preview",
+  "input": [{"role": "user", "content": "Click the login button"}],
+  "tools": [{
+    "type": "function",
+    "name": "computer",
+    "function": {
+      "name": "computer",
+      "description": "Execute a computer action",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "object",
+            "properties": {
+              "type": {"type": "string", "enum": ["click", "type", "navigate", "press"]}
+            },
+            "required": ["type"]
+          }
+        },
+        "required": ["action"]
+      }
+    }
+  }],
+  "truncation": "auto"
+}
+
+Example of OpenAI API response:
+{
+  "output": [{
+    "type": "tool_call",
+    "id": "call_abc123",
+    "function": {
+      "name": "computer",
+      "arguments": "{"action":{"type":"click","x":100,"y":200}}"
+    }
+  }]
+}
+
+Example of correct tool_result:
+{
+  "type": "tool_result",
+  "tool_call_id": "call_abc123",
+  "output": {
+    "browser": {
+      "screenshot": "base64encodedimage...",
+      "current_url": "https://example.com"
+    }
+  }
+}

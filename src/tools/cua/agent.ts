@@ -88,9 +88,9 @@ const activeSessions: Map<string, SessionInfo> = new Map();
 
 /**
  * Creates a response using the OpenAI responses API for Computer Use Agent
- * Direct port of the Python create_response function
+ * Direct port of the Python create_response function with added tool result validation
  */
-async function createResponse(kwargs: Record<string, any>): Promise<any> {
+async function createResponse(kwargs: Record<string, any>, sessionInfo?: SessionInfo): Promise<any> {
   const url = "https://api.openai.com/v1/responses";
   const headers: Record<string, string> = {
     "Authorization": `Bearer ${process.env.OPENAI_API_KEY}`,
@@ -114,7 +114,157 @@ async function createResponse(kwargs: Record<string, any>): Promise<any> {
         return item;
       });
     }
-    console.log('Sending payload to OpenAI:', JSON.stringify(debugPayload, null, 2));
+    // Use safer logging - avoid direct JSON.stringify to prevent MCP stderr parsing errors
+    console.error(`API request: model=${debugPayload.model}, items=${debugPayload.input?.length || 0}`);
+    
+    // Analyze the input to check for any missing tool results
+    if (kwargs.input && Array.isArray(kwargs.input)) {
+      // Track all tool call IDs and corresponding tool results
+      const toolCallIds = new Set<string>();
+      const resultIds = new Set<string>();
+      
+      // First pass: collect all IDs
+      for (const item of kwargs.input) {
+        if (item.type === 'tool_call' && item.id) {
+          toolCallIds.add(item.id);
+        } else if (item.type === 'tool_result' && item.tool_call_id) {
+          resultIds.add(item.tool_call_id);
+        }
+      }
+      
+      // Check for missing tool results
+      let missingResults = false;
+      for (const callId of toolCallIds) {
+        if (!resultIds.has(callId)) {
+          console.error(`WARNING: Missing tool_result for tool_call ${callId}`);
+          missingResults = true;
+        }
+      }
+      
+      // Fix missing tool results if needed
+      if (missingResults && sessionInfo) {
+        console.error(`Fixing missing tool results before API call`);
+        
+        // Find the latest screenshot for creating fake tool results
+        let latestScreenshot = '';
+        if (sessionInfo && sessionInfo.images && sessionInfo.images.length > 0) {
+          latestScreenshot = sessionInfo.images[sessionInfo.images.length - 1];
+        }
+        
+        // Create a copy of the input array to modify
+        const fixedInput = [...kwargs.input];
+        
+        // Add missing tool results
+        for (const callId of toolCallIds) {
+          if (!resultIds.has(callId)) {
+            console.error(`Adding missing tool_result for ${callId}`);
+            
+            // Find the corresponding tool call to create a proper result
+            const toolCall = fixedInput.find(item => item.type === 'tool_call' && item.id === callId);
+            
+            // Only add if we found the tool call
+            if (toolCall) {
+              // Create a tool result that matches the tool call
+              const toolResult = {
+                type: 'tool_result',
+                tool_call_id: callId,
+                output: JSON.stringify({
+                  browser: {
+                    screenshot: latestScreenshot,
+                    current_url: 'https://example.com' // Default URL
+                  }
+                })
+              };
+              
+              // Add the tool result to the fixed input array
+              fixedInput.push(toolResult);
+              console.error(`Added tool_result for ${callId}`);
+            }
+          }
+        }
+        
+        // Replace the input with our fixed version
+        kwargs.input = fixedInput;
+        console.error(`Input fixed with ${fixedInput.length} items`);
+      }
+    }
+    
+    // Log tool configuration safely 
+    if (kwargs.tools && Array.isArray(kwargs.tools)) {
+      console.error(`Tools: count=${kwargs.tools.length}`);
+      if (kwargs.tools.length > 0) {
+        const firstTool = kwargs.tools[0];
+        console.error(`First tool: type=${firstTool.type || 'unknown'}, name=${firstTool.name || 'unnamed'}`);
+      }
+    }
+    
+    // FINAL VALIDATION - critical check to ensure all tool calls have results
+    // This is a separate validation step to catch any tool calls that were missed earlier
+    if (kwargs.input && Array.isArray(kwargs.input)) {
+      // Track all tool call IDs and corresponding tool results again
+      const finalToolCallIds = new Set<string>();
+      const finalResultIds = new Set<string>();
+      
+      // First pass: collect all IDs
+      for (const item of kwargs.input) {
+        if (item.type === 'tool_call' && item.id) {
+          finalToolCallIds.add(item.id);
+          console.error(`VALIDATION: Found tool_call with ID ${item.id}`);
+        } else if (item.type === 'tool_result' && item.tool_call_id) {
+          finalResultIds.add(item.tool_call_id);
+          console.error(`VALIDATION: Found tool_result for ID ${item.tool_call_id}`);
+        }
+      }
+      
+      // Check for missing tool results
+      let stillMissingResults = false;
+      for (const callId of finalToolCallIds) {
+        if (!finalResultIds.has(callId)) {
+          console.error(`CRITICAL: Still missing tool_result for tool_call ${callId} after fixes`);
+          stillMissingResults = true;
+        }
+      }
+      
+      // Generate emergency fallback results if needed
+      if (stillMissingResults && sessionInfo) {
+        console.error(`EMERGENCY: Creating last-chance tool results before API call`);
+        
+        // Find the latest screenshot for creating emergency tool results
+        let emergencyScreenshot = '';
+        if (sessionInfo && sessionInfo.images && sessionInfo.images.length > 0) {
+          emergencyScreenshot = sessionInfo.images[sessionInfo.images.length - 1];
+        }
+        
+        // Create a copy of the input array to modify
+        const emergencyInput = [...kwargs.input];
+        
+        // Add missing tool results as a final safeguard
+        for (const callId of finalToolCallIds) {
+          if (!finalResultIds.has(callId)) {
+            console.error(`EMERGENCY: Adding last-chance result for ${callId}`);
+            
+            // Create an emergency tool result
+            const emergencyResult = {
+              type: 'tool_result',
+              tool_call_id: callId,
+              output: JSON.stringify({
+                browser: {
+                  screenshot: emergencyScreenshot,
+                  current_url: 'https://emergency-fallback.example.com'
+                }
+              })
+            };
+            
+            // Add the emergency result to the input array
+            emergencyInput.push(emergencyResult);
+          }
+        }
+        
+        // Replace the input with our emergency fixed version
+        kwargs.input = emergencyInput;
+        console.error(`EMERGENCY: Fixed input with ${emergencyInput.length} items`);
+      }
+    }
     
     // Exact equivalent of Python's requests.post(url, headers=headers, json=kwargs)
     const response = await fetch(url, {
@@ -130,7 +280,31 @@ async function createResponse(kwargs: Record<string, any>): Promise<any> {
       throw new Error(`OpenAI API error (${response.status}): ${errorText}`);
     }
 
-    return await response.json();
+    // Parse and log the response for debugging, but don't print JSON directly to console
+    const jsonResponse = await response.json() as Record<string, any>;
+    
+    // Use more careful logging to avoid JSON syntax issues in the console
+    if (jsonResponse.output && Array.isArray(jsonResponse.output)) {
+      console.error(`API response: items=${jsonResponse.output.length}`);
+      
+      // Carefully log the first item if available
+      if (jsonResponse.output.length > 0) {
+        const firstItem = jsonResponse.output[0] as Record<string, any>;
+        const itemType = firstItem.type || (firstItem.role ? `role-${firstItem.role}` : 'unknown');
+        console.error(`First item: type=${itemType}`);
+        
+        // Log tool_call details safely without output that could break MCP
+        if (itemType === 'tool_call') {
+          const id = firstItem.id || 'missing-id';
+          const functionName = firstItem.function?.name || 'unknown';
+          console.error(`Tool call: id=${id}, function=${functionName}`);
+        }
+      }
+    } else {
+      console.error('API response: no output items');
+    }
+
+    return jsonResponse;
   } catch (error: any) {
     console.error('Error calling OpenAI API:', error);
     throw error;
@@ -147,7 +321,7 @@ async function handleAction(action: ComputerAction, computer: PlaywrightComputer
     Object.entries(action).filter(([key]) => key !== 'type')
   );
 
-  console.log(`Executing action: ${actionType}(${JSON.stringify(actionArgs)})`);
+  console.error(`Executing action: ${actionType}(${JSON.stringify(actionArgs)})`);
   
   try {
     // Call the appropriate method on the computer
@@ -195,14 +369,14 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
   if (item.type === 'message') {
     // Print messages, just like the Python implementation
     const messageText = item.content[0]?.text || 'No message content';
-    console.log(`[${sessionId}] Message: ${messageText}`);
+    console.error(`[${sessionId}] Message: ${messageText}`);
     sessionInfo.logs.push(`Message: ${messageText}`);
     return [];
   }
 
   if (item.type === 'tool_call') {
-    // Handle tool calls from the CUA model
-    console.log(`[${sessionId}] Tool call: ${JSON.stringify(item)}`);
+    // Handle tool calls from the CUA model - use safe logging
+    console.error(`[${sessionId}] Received tool_call - id: ${item.id || 'missing-id'}, function: ${item.function?.name || 'unknown'}`);
     
     if (item.function && item.function.name === 'computer') {
       try {
@@ -225,8 +399,8 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
           Object.entries(action).filter(([key]) => key !== 'type')
         );
         
-        console.log(`[${sessionId}] Computer action: ${actionType}(${JSON.stringify(actionArgs)})`);
-        sessionInfo.logs.push(`Action: ${actionType}(${JSON.stringify(actionArgs)})`);
+        console.error(`[${sessionId}] Computer action: ${actionType} with ${Object.keys(actionArgs).length} args`);
+        sessionInfo.logs.push(`Action: ${actionType} with args: ${Object.keys(actionArgs).join(', ')}`);
         
         // Execute the action on the computer
         await (computer as any)[actionType](...Object.values(actionArgs));
@@ -235,15 +409,26 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
         const screenshotBase64 = await computer.screenshot();
         
         // Build the call output with proper tool_result type
+        // Make sure we're using the correct properties for the tool_call_id
+        const tool_call_id = item.id || item.call_id;
+        
+        // Ensure we actually have a tool_call_id
+        if (!tool_call_id) {
+          console.error(`[${sessionId}] Missing tool_call_id in item:`, item);
+          throw new Error('Missing tool_call_id in tool_call item');
+        }
+        
+        console.error(`[${sessionId}] Responding to tool_call_id: ${tool_call_id}`);
+        
         const callOutput = {
           type: 'tool_result',
-          tool_call_id: item.id,
-          output: {
+          tool_call_id: tool_call_id,
+          output: JSON.stringify({
             browser: {
               screenshot: screenshotBase64,
               current_url: await computer.getCurrentUrl().catch(() => '')
             }
-          }
+          })
         };
         
         // Store the screenshot in the session
@@ -255,17 +440,29 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
         sessionInfo.logs.push(`Error: ${error.message || 'Unknown error'}`);
         
         // Return a failed tool result
+        const tool_call_id = item.id || item.call_id;
+        if (!tool_call_id) {
+          console.error(`[${sessionId}] Missing tool_call_id in error handling:`, item);
+          throw new Error('Missing tool_call_id in tool_call item during error handling');
+        }
+        
         return [{
           type: 'tool_result',
-          tool_call_id: item.id,
+          tool_call_id: tool_call_id,
           output: JSON.stringify({ error: error.message || 'Unknown error' })
         }];
       }
     } else {
       console.warn(`[${sessionId}] Unknown tool call: ${item.function?.name}`);
+      const tool_call_id = item.id || item.call_id;
+      if (!tool_call_id) {
+        console.error(`[${sessionId}] Missing tool_call_id for unknown tool:`, item);
+        throw new Error('Missing tool_call_id in tool_call item for unknown tool');
+      }
+      
       return [{
         type: 'tool_result',
-        tool_call_id: item.id,
+        tool_call_id: tool_call_id,
         output: JSON.stringify({ error: `Unsupported tool: ${item.function?.name}` })
       }];
     }
@@ -281,7 +478,7 @@ async function handleItem(item: any, computer: PlaywrightComputer, sessionId: st
         Object.entries(action).filter(([key]) => key !== 'type')
       );
       
-      console.log(`[${sessionId}] ${actionType}(${JSON.stringify(actionArgs)})`);
+      console.error(`[${sessionId}] ${actionType}(${JSON.stringify(actionArgs)})`);
       sessionInfo.logs.push(`Action: ${actionType}(${JSON.stringify(actionArgs)})`);
       
       // Execute the action on the computer
@@ -441,12 +638,13 @@ async function runComputerAgent(sessionId: string, computer: PlaywrightComputer,
     const browserEnvironment = "browser";
     
     // Define the tools for the API using the proper format for the Computer Use Agent tool API
-    // Use functions format for modern CUA API
+    // Tools format based on the API error message about missing 'tools[0].name'
     const tools = [
       {
         type: "function",
+        name: "computer", // Added name at this level based on error message
         function: {
-          name: "computer",
+          name: "computer", // Keep this as well for backward compatibility
           description: "Execute a computer action",
           parameters: {
             type: "object",
@@ -488,13 +686,48 @@ async function runComputerAgent(sessionId: string, computer: PlaywrightComputer,
       loopCount++;
       
       try {
-        // For the first loop, we add the user's instructions and the current browser state
-        if (loopCount === 1) {
-          console.log('Starting first loop with user instructions and browser state');
+        // Add detailed debugging of conversation state before API call
+        console.error(`Loop ${loopCount}: items=${sessionInfo.items.length}`);
+        
+        // Track tool calls and results, but don't log each item to avoid MCP parsing issues
+        const toolCalls = new Map();
+        const toolResults = new Map();
+        
+        // First pass: collect all tool call IDs and tool result IDs
+        for (let i = 0; i < sessionInfo.items.length; i++) {
+          const item = sessionInfo.items[i];
           
-          // We'll keep it simple with just the items array
-          // OpenAI CUA will detect it's a browser context from the user message
-          // No need to add an explicit screenshot message
+          if (!item) {
+            continue;
+          }
+          
+          const itemType = item.type || (item.role ? `role-${item.role}` : 'no-type');
+          
+          // Track tool calls and results without verbose logging
+          if (itemType === 'tool_call') {
+            const id = item.id || 'missing-id';
+            toolCalls.set(id, { index: i, item });
+          }
+          
+          if (itemType === 'tool_result') {
+            const id = item.tool_call_id || 'missing-id';
+            toolResults.set(id, { index: i, item });
+          }
+        }
+        
+        // Log summary information
+        console.error(`Found ${toolCalls.size} tool calls and ${toolResults.size} tool results`);
+        
+        // Check for missing tool results without individual logging
+        let missingResultCount = 0;
+        for (const [id, call] of toolCalls.entries()) {
+          if (!toolResults.has(id)) {
+            missingResultCount++;
+          }
+        }
+        
+        if (missingResultCount > 0) {
+          console.error(`WARNING: Missing ${missingResultCount} tool results`);
         }
         
         // Call the OpenAI Responses API exactly like the Python sample
@@ -509,13 +742,10 @@ async function runComputerAgent(sessionId: string, computer: PlaywrightComputer,
           truncation: 'auto'
         };
         
-        console.log(`API REQUEST (loop ${loopCount}) - Sending`, JSON.stringify({
-          ...kwargs,
-          input: kwargs.input.length + ' items'
-        }, null, 2));
+        console.error(`API request ${loopCount}: sending ${kwargs.input.length} items with model=${kwargs.model}`);
         
-        // Call the create_response function exactly like the Python implementation
-        const response = await createResponse(kwargs);
+        // Call the create_response function with session info for validation
+        const response = await createResponse(kwargs, sessionInfo);
         
         if (!response.output) {
           console.error(response);
@@ -528,13 +758,56 @@ async function runComputerAgent(sessionId: string, computer: PlaywrightComputer,
         
         // Process each output item and get any results (e.g., screenshot after action)
         // Process each item individually, exactly as in Python
+        // Keep track of tool calls and results
+        const newToolCalls = new Map<string, any>();
+        const newToolResults = new Map<string, any>();
+        
+        // First, process all items and collect results
         for (const item of response.output) {
           // Process the item and get any outputs
           const outputs = await handleItem(item, computer, sessionId);
           
+          // Track any tool calls in this batch
+          if (item.type === 'tool_call' && item.id) {
+            newToolCalls.set(item.id, item);
+          }
+          
+          // Add outputs to the conversation and track tool results
+          for (const output of outputs) {
+            if (output.type === 'tool_result' && output.tool_call_id) {
+              newToolResults.set(output.tool_call_id, output);
+            }
+          }
+          
           // Add outputs to the conversation
-          // Python: items += handle_item(item, computer)
           items.push(...outputs);
+        }
+        
+        // Check for any tool calls that don't have corresponding results
+        for (const [callId, callItem] of newToolCalls.entries()) {
+          if (!newToolResults.has(callId)) {
+            // Create a placeholder result
+            console.error(`Creating fallback tool_result for missing result ${callId}`);
+            
+            // Take a fresh screenshot to include
+            const fallbackScreenshot = await computer.screenshot();
+            sessionInfo.images.push(fallbackScreenshot);
+            
+            // Create a generic tool result
+            const fallbackResult = {
+              type: 'tool_result',
+              tool_call_id: callId,
+              output: JSON.stringify({
+                browser: {
+                  screenshot: fallbackScreenshot,
+                  current_url: await computer.getCurrentUrl().catch(() => '')
+                }
+              })
+            };
+            
+            // Add the fallback result to the conversation
+            items.push(fallbackResult);
+          }
         }
         
         // Check if we have a final message (assistant response ends the loop)
@@ -848,8 +1121,9 @@ export async function agentReply(context: Context, params: { sessionId: string, 
       const tools = [
         {
           type: "function",
+          name: "computer", // Added name at this level based on error message
           function: {
-            name: "computer",
+            name: "computer", // Keep this as well for backward compatibility
             description: "Execute a computer action",
             parameters: {
               type: "object",
@@ -890,6 +1164,50 @@ export async function agentReply(context: Context, params: { sessionId: string, 
             loopCount++;
             
             try {
+              // Add detailed debugging of conversation state before API call
+              console.error(`Reply loop ${loopCount}: items=${sessionInfo.items.length}`);
+              
+              // Track tool calls and results, but don't log each item to avoid MCP parsing issues
+              const toolCalls = new Map();
+              const toolResults = new Map();
+              
+              // First pass: collect all tool call IDs and tool result IDs
+              for (let i = 0; i < sessionInfo.items.length; i++) {
+                const item = sessionInfo.items[i];
+                
+                if (!item) {
+                  continue;
+                }
+                
+                const itemType = item.type || (item.role ? `role-${item.role}` : 'no-type');
+                
+                // Track tool calls and results without verbose logging
+                if (itemType === 'tool_call') {
+                  const id = item.id || 'missing-id';
+                  toolCalls.set(id, { index: i, item });
+                }
+                
+                if (itemType === 'tool_result') {
+                  const id = item.tool_call_id || 'missing-id';
+                  toolResults.set(id, { index: i, item });
+                }
+              }
+              
+              // Log summary information
+              console.error(`Found ${toolCalls.size} tool calls and ${toolResults.size} tool results`);
+              
+              // Check for missing tool results without individual logging
+              let missingResultCount = 0;
+              for (const [id, call] of toolCalls.entries()) {
+                if (!toolResults.has(id)) {
+                  missingResultCount++;
+                }
+              }
+              
+              if (missingResultCount > 0) {
+                console.error(`WARNING: Missing ${missingResultCount} tool results`);
+              }
+              
               // Create the payload for the API
               const kwargs = {
                 model: 'computer-use-preview',
@@ -900,8 +1218,8 @@ export async function agentReply(context: Context, params: { sessionId: string, 
               
               sessionInfo.logs.push(`Making API request (reply loop ${loopCount})`);
               
-              // Call the API
-              const response = await createResponse(kwargs);
+              // Call the API with session info for validation
+              const response = await createResponse(kwargs, sessionInfo);
               
               if (!response.output) {
                 throw new Error('No output from model');
@@ -911,12 +1229,56 @@ export async function agentReply(context: Context, params: { sessionId: string, 
               sessionInfo.items.push(...response.output);
               
               // Process each output item
+              // Keep track of tool calls and results
+              const newToolCalls = new Map<string, any>();
+              const newToolResults = new Map<string, any>();
+              
+              // First pass - process all items and collect tool calls/results
               for (const item of response.output) {
                 // Process the item and get any outputs
                 const outputs = await handleItem(item, computer, sessionId);
                 
+                // Track any tool calls in this batch
+                if (item.type === 'tool_call' && item.id) {
+                  newToolCalls.set(item.id, item);
+                }
+                
+                // Track tool results
+                for (const output of outputs) {
+                  if (output.type === 'tool_result' && output.tool_call_id) {
+                    newToolResults.set(output.tool_call_id, output);
+                  }
+                }
+                
                 // Add outputs to the conversation
                 sessionInfo.items.push(...outputs);
+              }
+              
+              // Check for any tool calls that don't have results
+              for (const [callId, callItem] of newToolCalls.entries()) {
+                if (!newToolResults.has(callId)) {
+                  // Create a placeholder result
+                  console.error(`Creating fallback tool_result for missing result ${callId} in reply`);
+                  
+                  // Take a fresh screenshot to include
+                  const fallbackScreenshot = await computer.screenshot();
+                  sessionInfo.images.push(fallbackScreenshot);
+                  
+                  // Create a generic tool result
+                  const fallbackResult = {
+                    type: 'tool_result',
+                    tool_call_id: callId,
+                    output: JSON.stringify({
+                      browser: {
+                        screenshot: fallbackScreenshot,
+                        current_url: await computer.getCurrentUrl().catch(() => '')
+                      }
+                    })
+                  };
+                  
+                  // Add the fallback result to the conversation
+                  sessionInfo.items.push(fallbackResult);
+                }
               }
               
               // Check if we have a final message

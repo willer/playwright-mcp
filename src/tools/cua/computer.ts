@@ -142,7 +142,7 @@ export class PlaywrightComputer {
         finalUrl = 'https://' + finalUrl;
       }
       
-      console.log(`Navigating to: ${finalUrl}`);
+      console.error(`Navigating to: ${finalUrl}`);
       
       try {
         // Use a longer timeout and simpler load state
@@ -151,7 +151,7 @@ export class PlaywrightComputer {
           waitUntil: 'domcontentloaded',
         });
         
-        console.log(`Successfully navigated to ${finalUrl}`);
+        console.error(`Successfully navigated to ${finalUrl}`);
       } catch (error: any) {
         console.error(`Navigation error: ${error.message}`);
         
@@ -214,7 +214,7 @@ export class PlaywrightComputer {
           </html>
         `);
         // Log the error but continue execution
-        console.log(`Created error page for failed navigation to ${finalUrl}`);
+        console.error(`Created error page for failed navigation to ${finalUrl}`);
       }
     } catch (error: any) {
       console.error(`Fatal navigation error: ${error.message}`);

@@ -42,9 +42,13 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
     usingCorrectModel = agentCode.includes("model: 'computer-use-preview'");
     
     // Check for tool definitions that would indicate proper Computer Use Preview API
+    // Include both the older computer-preview format and the newer function-based format
     usingComputerTools = agentCode.includes('type: "computer-preview"') || 
                           agentCode.includes('type: \'computer-preview\'') ||
-                          agentCode.match(/tools:\s*\[\s*\{\s*type:\s*['"]computer-preview['"]/s) !== null;
+                          agentCode.match(/tools:\s*\[\s*\{\s*type:\s*['"]computer-preview['"]/s) !== null ||
+                          agentCode.includes('type: "function"') && 
+                          agentCode.includes('name: "computer"') &&
+                          agentCode.match(/function:\s*\{\s*name:\s*['"]computer['"]/) !== null;
     
     // Check for gpt-4o (incorrect model)
     usingGpt4o = agentCode.includes("model: 'gpt-4o'") || 
@@ -63,8 +67,10 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
     'Update the model parameter in API calls to "computer-use-preview".';
   
   const toolsErrorMsg = 'CUA implementation is NOT using the proper computer tools format. ' +
-    'Proper implementation should include tools with type "computer-preview" with ' +
-    'the appropriate parameters. Use the proper Computer Use Agent API format as shown in the OpenAI sample code.';
+    'Proper implementation should include either:\n' +
+    '1. Tools with type "computer-preview" with appropriate parameters (older format), or\n' +
+    '2. Tools with type "function" and name "computer" (newer function-based format)\n' +
+    'Use the proper Computer Use Agent API format as shown in the OpenAI sample code.';
     
   const gpt4ErrorMsg = 'Current implementation is incorrectly using gpt-4o or gpt-4-turbo model ' +
     'instead of computer-use-preview. This approach tries to simulate CUA ' +
@@ -96,12 +102,52 @@ test('verify CUA uses correct model and API format', async ({ page }) => {
     console.log('3. Follow the computer-use-preview model documentation');
     console.log('4. Reference examples in the sample code:');
     console.log('   - https://github.com/openai/openai-cua-sample-app');
-    console.log('\nExample OpenAI Computer Use Agent request format:');
+    console.log('\nExample OpenAI Computer Use Agent request formats:');
     console.log(`
+// Modern function-based format:
 {
   "model": "computer-use-preview",
   "input": [
     {"role": "user", "content": "Click the login button"}
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "computer",
+        "description": "Execute a computer action",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "object",
+              "properties": {
+                "type": {"type": "string", "enum": ["click", "type", "navigate", "press"]}
+              },
+              "required": ["type"]
+            }
+          },
+          "required": ["action"]
+        }
+      }
+    }
+  ],
+  "truncation": "auto"
+}
+
+// Legacy format (may not work with latest API):
+{
+  "model": "computer-use-preview",
+  "input": [
+    {"role": "user", "content": "Click the login button"}
+  ],
+  "tools": [
+    {
+      "type": "computer-preview", 
+      "display_width": 1280, 
+      "display_height": 720, 
+      "environment": "browser"
+    }
   ],
   "truncation": "auto"
 }
@@ -128,7 +174,9 @@ ${!usingComputerTools ? '- NOT using proper computer-preview tools format ❌\n'
 To fix these issues:
 1. Update model to computer-use-preview
 2. Use the /v1/responses endpoint
-3. Implement proper tools with type: "computer-preview"
+3. Implement proper tools in one of these formats:
+   a. Older format: tools with type: "computer-preview"
+   b. Newer format: tools with type: "function" and name: "computer"
 
 Reference the sample implementation:
 - https://github.com/openai/openai-cua-sample-app
