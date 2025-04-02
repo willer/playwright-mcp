@@ -18,6 +18,7 @@ import { fork } from 'child_process';
 import path from 'path';
 
 import * as playwright from 'playwright';
+import yaml from 'yaml';
 
 export type ContextOptions = {
   browserName?: 'chromium' | 'firefox' | 'webkit';
@@ -34,7 +35,7 @@ export class Context {
   private _console: playwright.ConsoleMessage[] = [];
   private _createPagePromise: Promise<playwright.Page> | undefined;
   private _fileChooser: playwright.FileChooser | undefined;
-  private _lastSnapshotFrames: playwright.FrameLocator[] = [];
+  private _lastSnapshotFrames: (playwright.Page | playwright.FrameLocator)[] = [];
 
   constructor(options: ContextOptions) {
     this._options = options;
@@ -202,26 +203,47 @@ export class Context {
   }
 
   async allFramesSnapshot() {
-    const page = this.existingPage();
-    const visibleFrames = await page.locator('iframe').filter({ visible: true }).all();
-    this._lastSnapshotFrames = visibleFrames.map(frame => frame.contentFrame());
+    this._lastSnapshotFrames = [];
+    const yaml = await this._allFramesSnapshot(this.existingPage());
+    return yaml.toString().trim();
+  }
 
-    const snapshots = await Promise.all([
-      page.locator('html').ariaSnapshot({ ref: true }),
-      ...this._lastSnapshotFrames.map(async (frame, index) => {
-        const snapshot = await frame.locator('html').ariaSnapshot({ ref: true });
-        const args = [];
-        const src = await frame.owner().getAttribute('src');
-        if (src)
-          args.push(`src=${src}`);
-        const name = await frame.owner().getAttribute('name');
-        if (name)
-          args.push(`name=${name}`);
-        return `\n# iframe ${args.join(' ')}\n` + snapshot.replaceAll('[ref=', `[ref=f${index}`);
-      })
-    ]);
+  private async _allFramesSnapshot(frame: playwright.Page | playwright.FrameLocator): Promise<yaml.Document> {
+    const frameIndex = this._lastSnapshotFrames.push(frame) - 1;
+    const snapshotString = await frame.locator('body').ariaSnapshot({ ref: true });
+    const snapshot = yaml.parseDocument(snapshotString);
 
-    return snapshots.join('\n');
+    const visit = async (node: any): Promise<unknown> => {
+      if (yaml.isPair(node)) {
+        await Promise.all([
+          visit(node.key).then(k => node.key = k),
+          visit(node.value).then(v => node.value = v)
+        ]);
+      } else if (yaml.isSeq(node) || yaml.isMap(node)) {
+        node.items = await Promise.all(node.items.map(visit));
+      } else if (yaml.isScalar(node)) {
+        if (typeof node.value === 'string') {
+          const value = node.value;
+          if (frameIndex > 0)
+            node.value = value.replace('[ref=', `[ref=f${frameIndex}`);
+          if (value.startsWith('iframe ')) {
+            const ref = value.match(/\[ref=(.*)\]/)?.[1];
+            if (ref) {
+              try {
+                const childSnapshot = await this._allFramesSnapshot(frame.frameLocator(`aria-ref=${ref}`));
+                return snapshot.createPair(node.value, childSnapshot);
+              } catch (error) {
+                return snapshot.createPair(node.value, '<could not take iframe snapshot>');
+              }
+            }
+          }
+        }
+      }
+
+      return node;
+    };
+    await visit(snapshot.contents);
+    return snapshot;
   }
   
   async compactSnapshot() {
@@ -312,16 +334,16 @@ export class Context {
   }
 
   refLocator(ref: string): playwright.Locator {
-    const page = this.existingPage();
-    let frame: playwright.Frame | playwright.FrameLocator = page.mainFrame();
+    let frame = this._lastSnapshotFrames[0];
     const match = ref.match(/^f(\d+)(.*)/);
     if (match) {
       const frameIndex = parseInt(match[1], 10);
-      if (!this._lastSnapshotFrames[frameIndex])
-        throw new Error(`Frame does not exist. Provide ref from the most current snapshot.`);
       frame = this._lastSnapshotFrames[frameIndex];
       ref = match[2];
     }
+
+    if (!frame)
+      throw new Error(`Frame does not exist. Provide ref from the most current snapshot.`);
 
     return frame.locator(`aria-ref=${ref}`);
   }
