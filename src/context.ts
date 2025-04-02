@@ -153,7 +153,14 @@ export class Context {
   private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
     try {
       const browserType = this._options.browserName ? playwright[this._options.browserName] : playwright.chromium;
-      return await browserType.launchPersistentContext(this._options.userDataDir, this._options.launchOptions);
+      
+      // Ensure launchOptions has args for extensions if not present
+      const launchOptions = {
+        ...this._options.launchOptions,
+        args: [...(this._options.launchOptions?.args || []), '--enable-extensions']
+      };
+      
+      return await browserType.launchPersistentContext(this._options.userDataDir, launchOptions);
     } catch (error: any) {
       if (error.message.includes('Executable doesn\'t exist'))
         throw new Error(`Browser specified in your config is not installed. Either install it (likely) or change the config.`);

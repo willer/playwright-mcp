@@ -87,6 +87,10 @@ Playwright MCP will launch the browser with the new profile, located at
 
 All the logged in information will be stored in that profile, you can delete it between sessions if you'd like to clear the offline state.
 
+### Chrome Extensions Support
+
+Chrome extensions are enabled by default when using a Chromium-based browser in headed mode. This allows you to access the Chrome Web Store and install extensions directly from there.
+
 
 ### Running headless browser (Browser without GUI).
 

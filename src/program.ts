@@ -75,6 +75,7 @@ program
         headless: !!options.headless,
         channel,
         executablePath: options.executablePath,
+        args: ['--enable-extensions'],
       };
 
       const userDataDir = options.userDataDir ?? await createUserDataDir(browserName);
