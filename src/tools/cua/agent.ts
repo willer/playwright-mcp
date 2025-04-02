@@ -1059,19 +1059,20 @@ export const agentStart: Tool = {
 
 // Agent status schema
 const agentStatusSchema = z.object({
-  waitSeconds: z.number().optional().describe('Time in seconds to wait for completion'),
+  waitSeconds: z.number().optional().default(5).describe('Time in seconds to wait for session completion (defaults to 5 seconds). Set to 0 to check status immediately without waiting.'),
 });
 
 export const agentStatus: Tool = {
   schema: {
     name: 'agent_status',
-    description: 'Check the status of the running agent session',
+    description: 'Check the status of the running agent session. Waits for 5 seconds by default to allow the agent to complete its current action before reporting status. Use to check if the agent has finished processing or needs more input.',
     inputSchema: zodToJsonSchema(agentStatusSchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentStatusSchema.parse(params);
-    const { waitSeconds = 0 } = validatedParams;
+    // Default is now handled by schema, but we extract it here
+    const { waitSeconds } = validatedParams;
 
     // Get the most recent session
     const sessionEntries = Array.from(sessions.entries());
@@ -1133,13 +1134,13 @@ export const agentStatus: Tool = {
 
 // Agent log schema
 const agentLogSchema = z.object({
-  includeImages: z.boolean().optional().describe('Whether to include images in the log'),
+  includeImages: z.boolean().optional().describe('EXPENSIVE: Whether to include images in the log (defaults to false). Including images uses many tokens and should be avoided unless necessary'),
 });
 
 export const agentLog: Tool = {
   schema: {
     name: 'agent_log',
-    description: 'Get the complete log of an agent session',
+    description: 'Get the complete log of an agent session. By default, does NOT include screenshots to save tokens.',
     inputSchema: zodToJsonSchema(agentLogSchema),
   },
 
@@ -1298,7 +1299,7 @@ const agentGetLastImageSchema = z.object({});
 export const agentGetLastImage: Tool = {
   schema: {
     name: 'agent_get_last_image',
-    description: 'Get the last screenshot from an agent session',
+    description: 'EXPENSIVE: Get the last screenshot from an agent session. Uses many tokens due to image size. Only use when explicitly requested by user.',
     inputSchema: zodToJsonSchema(agentGetLastImageSchema),
   },
 
