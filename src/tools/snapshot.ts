@@ -23,19 +23,27 @@ import type * as playwright from 'playwright';
 import type { Tool } from './tool';
 
 const snapshotSchema = z.object({
-  compact: z.boolean().optional().default(true).describe('Whether to return a compact snapshot to save tokens (defaults to true)')
+  truncate: z.boolean().optional().default(true).describe('Whether to limit the length of the snapshot (defaults to true, saves tokens)'),
+  truncate_length: z.number().optional().default(5000).describe('Maximum length of the snapshot when truncate=true (defaults to 5000)'),
+  compact: z.boolean().optional().default(false).describe('Whether to show only interactive elements (defaults to false). Set to true to focus only on actionable items.')
 });
 
 export const snapshot: Tool = {
   schema: {
     name: 'browser_snapshot',
-    description: 'EFFICIENT: Capture accessibility snapshot of the current page showing only interactive elements by default. Set compact=false for full page details (uses many more tokens). Use after navigation actions.',
+    description: 'Capture accessibility snapshot of the current page. By default returns normal page details with truncation to save tokens. Use truncate=false for full details or compact=true to focus only on interactive elements.',
     inputSchema: zodToJsonSchema(snapshotSchema),
   },
 
   handle: async (context, params) => {
     const validatedParams = snapshotSchema.parse(params);
-    return await captureAriaSnapshot(context, '', validatedParams.compact);
+    return await captureAriaSnapshot(
+      context, 
+      '', 
+      validatedParams.compact,
+      validatedParams.truncate,
+      validatedParams.truncate_length
+    );
   },
 };
 

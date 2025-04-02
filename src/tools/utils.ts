@@ -71,7 +71,7 @@ async function waitForCompletion<R>(page: playwright.Page, callback: () => Promi
   }
 }
 
-export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false, compact: boolean = true): Promise<ToolResult> {
+export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false, compact: boolean = false): Promise<ToolResult> {
   const page = context.existingPage();
   const dismissFileChooser = context.hasFileChooser();
   await waitForCompletion(page, () => callback(page));
@@ -83,7 +83,13 @@ export async function runAndWait(context: Context, status: string, callback: (pa
   return result;
 }
 
-export async function captureAriaSnapshot(context: Context, status: string = '', compact: boolean = false): Promise<ToolResult> {
+export async function captureAriaSnapshot(
+  context: Context, 
+  status: string = '', 
+  compact: boolean = false,
+  truncate: boolean = true,
+  truncateLength: number = 5000
+): Promise<ToolResult> {
   const page = context.existingPage();
   const lines = [];
   if (status)
@@ -96,26 +102,41 @@ export async function captureAriaSnapshot(context: Context, status: string = '',
   if (context.hasFileChooser())
     lines.push(`- There is a file chooser visible that requires browser_choose_file to be called`);
   
+  let snapshotContent = '';
+  
   if (compact) {
     // In compact mode, we'll only include the essential interactive elements
-    // to significantly reduce token usage while still providing functionality
     lines.push(
-      `- Mode: Compact snapshot (to save tokens)`,
-      `- For full snapshot, use browser_snapshot with compact=false`,
-      '```yaml',
-      await context.compactSnapshot(), // Need to implement this in context.ts
-      '```',
-      ''
+      `- Mode: Compact (showing only interactive elements)`,
+      `- For complete page details, use browser_snapshot with compact=false`,
+      '```yaml'
     );
+    snapshotContent = await context.compactSnapshot();
   } else {
-    // Full detailed snapshot (original behavior)
+    // Normal detailed snapshot
     lines.push(
-      `- Mode: Full snapshot (uses more tokens)`,
-      '```yaml',
-      await context.allFramesSnapshot(),
-      '```',
-      ''
+      `- Mode: Standard page details`,
+      '```yaml'
     );
+    snapshotContent = await context.allFramesSnapshot();
+  }
+  
+  // Handle truncation if needed
+  if (truncate && snapshotContent.length > truncateLength) {
+    snapshotContent = snapshotContent.substring(0, truncateLength);
+    snapshotContent += `\n\n# ... Content truncated to ${truncateLength} characters ...`;
+    snapshotContent += `\n# Use browser_snapshot with truncate=false for full content, or compact=true to focus on interactive elements.`;
+  }
+  
+  lines.push(snapshotContent, '```', '');
+  
+  // Add truncation status display
+  if (truncate) {
+    lines.push(`Note: Truncation is enabled. ${
+      snapshotContent.length >= truncateLength ? 
+      `Content was truncated to ${truncateLength} characters.` : 
+      `Content was under the ${truncateLength} character limit and was not truncated.`
+    }`);
   }
   
   return {
