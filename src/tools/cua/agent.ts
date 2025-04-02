@@ -1169,39 +1169,67 @@ export const agentLog: Tool = {
       url: entry.url || ''
     }));
 
-    // Prepare the response
-    const result: any = {
+    // Format the logs as an array of separate entries for better display
+    // Create a more readable summary first
+    const summaryResult = {
       status: session.status,
-      logs: session.logs,
-      actions: formattedActionLog, // Add the formatted action log
+      sessionId: latestSessionId,
       startTime: new Date(session.startTime).toISOString(),
       endTime: session.endTime ? new Date(session.endTime).toISOString() : undefined,
       runningTime: session.status === 'running'
         ? Date.now() - session.startTime
         : session.runningTime,
+      actions: {
+        total: formattedActionLog.length,
+        successful: formattedActionLog.filter(a => a.success).length,
+        failed: formattedActionLog.filter(a => !a.success).length
+      },
       error: session.error
     };
-
-    // Include conversation items
-    result.items = session.items.map(item => {
-      // Sanitize computer_call_output items to omit image data if includeImages is false
-      if ('type' in item && item.type === 'computer_call_output' && !includeImages) {
-        const sanitized = {...item};
-        if (sanitized.output && sanitized.output.image_url) {
-          sanitized.output = {...sanitized.output, image_url: '[image omitted]'};
-        }
-        return sanitized;
-      }
-      return item;
-    });
-
-    // Optionally include images
-    if (includeImages) {
-      result.images = session.images;
+    
+    // Return logs as formatted text entries rather than a big JSON blob
+    const content = [
+      { type: 'text' as const, text: `Session Summary: ${JSON.stringify(summaryResult, null, 2)}` },
+      { type: 'text' as const, text: `\nRecent Actions (${Math.min(5, formattedActionLog.length)} of ${formattedActionLog.length}):\n${JSON.stringify(formattedActionLog.slice(-5), null, 2)}` }
+    ];
+    
+    // Add the recent log entries
+    if (session.logs.length > 0) {
+      content.push({ 
+        type: 'text' as const, 
+        text: `\nRecent Logs (${Math.min(10, session.logs.length)} of ${session.logs.length}):\n${session.logs.slice(-10).join('\n')}` 
+      });
     }
-
-    // Combine into a single content response
-    const content = [{ type: 'text' as const, text: JSON.stringify(result) }];
+    
+    // Add both user messages and output_text messages (CUA conversation)
+    const conversation = [];
+    
+    // Extract messages in conversational order
+    for (const item of session.items) {
+      if ('role' in item && item.role === 'user') {
+        conversation.push({
+          role: 'user',
+          text: item.content
+        });
+      } else if ('type' in item && item.type === 'output_text') {
+        conversation.push({
+          role: 'assistant',
+          text: item.text
+        });
+      }
+    }
+    
+    // Show just the most recent conversation entries
+    const recentConversation = conversation.slice(-6);
+    
+    if (recentConversation.length > 0) {
+      content.push({ 
+        type: 'text' as const, 
+        text: `\nRecent Conversation:\n${recentConversation.map(msg => 
+          `${msg.role === 'user' ? '👤 User' : '🤖 CUA'}: ${msg.text}`
+        ).join('\n\n')}` 
+      });
+    }
     
     // If includeImages, add the most recent image
     if (includeImages && session.images.length > 0) {
