@@ -46,7 +46,8 @@ const cuaTools: Tool[] = [
 ];
 
 const snapshotTools: Tool[] = [
-  common.navigate(true),
+  // Don't automatically take a snapshot on navigation to save tokens
+  common.navigate(false), 
   common.goBack(true),
   common.goForward(true),
   common.chooseFile(true),
