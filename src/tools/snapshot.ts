@@ -60,8 +60,34 @@ export const click: Tool = {
   },
 
   handle: async (context, params) => {
-    const validatedParams = elementSchema.parse(params);
-    return runAndWait(context, `"${validatedParams.element}" clicked`, () => context.refLocator(validatedParams.ref).click(), true);
+    try {
+      const validatedParams = elementSchema.parse(params);
+      
+      // First, verify that the ref actually exists before attempting to click
+      const locator = context.refLocator(validatedParams.ref);
+      const count = await locator.count();
+      
+      if (count === 0) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Error: Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
+          }],
+          isError: true
+        };
+      }
+      
+      return runAndWait(context, `"${validatedParams.element}" clicked`, () => locator.click(), true);
+    } catch (error: any) {
+      console.error(`Error in browser_click: ${error}`);
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `Error clicking element: ${error.message || String(error)}. Try using browser_snapshot to refresh the page data.` 
+        }],
+        isError: true
+      };
+    }
   },
 };
 
@@ -80,12 +106,49 @@ export const drag: Tool = {
   },
 
   handle: async (context, params) => {
-    const validatedParams = dragSchema.parse(params);
-    return runAndWait(context, `Dragged "${validatedParams.startElement}" to "${validatedParams.endElement}"`, async () => {
+    try {
+      const validatedParams = dragSchema.parse(params);
+      
+      // First, verify that both elements exist before attempting to drag
       const startLocator = context.refLocator(validatedParams.startRef);
       const endLocator = context.refLocator(validatedParams.endRef);
-      await startLocator.dragTo(endLocator);
-    }, true);
+      
+      const startCount = await startLocator.count();
+      const endCount = await endLocator.count();
+      
+      if (startCount === 0) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Error: Source element "${validatedParams.startElement}" (ref: ${validatedParams.startRef}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
+          }],
+          isError: true
+        };
+      }
+      
+      if (endCount === 0) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Error: Target element "${validatedParams.endElement}" (ref: ${validatedParams.endRef}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
+          }],
+          isError: true
+        };
+      }
+      
+      return runAndWait(context, `Dragged "${validatedParams.startElement}" to "${validatedParams.endElement}"`, async () => {
+        await startLocator.dragTo(endLocator);
+      }, true);
+    } catch (error: any) {
+      console.error(`Error in browser_drag: ${error}`);
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `Error performing drag and drop: ${error.message || String(error)}. The elements might not be draggable or the page may have changed. Try using browser_snapshot to refresh the page data.` 
+        }],
+        isError: true
+      };
+    }
   },
 };
 
@@ -97,8 +160,34 @@ export const hover: Tool = {
   },
 
   handle: async (context, params) => {
-    const validatedParams = elementSchema.parse(params);
-    return runAndWait(context, `Hovered over "${validatedParams.element}"`, () => context.refLocator(validatedParams.ref).hover(), true);
+    try {
+      const validatedParams = elementSchema.parse(params);
+      
+      // First, verify that the ref actually exists before attempting to hover
+      const locator = context.refLocator(validatedParams.ref);
+      const count = await locator.count();
+      
+      if (count === 0) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Error: Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
+          }],
+          isError: true
+        };
+      }
+      
+      return runAndWait(context, `Hovered over "${validatedParams.element}"`, () => locator.hover(), true);
+    } catch (error: any) {
+      console.error(`Error in browser_hover: ${error}`);
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `Error hovering over element: ${error.message || String(error)}. Try using browser_snapshot to refresh the page data.` 
+        }],
+        isError: true
+      };
+    }
   },
 };
 
@@ -115,13 +204,38 @@ export const type: Tool = {
   },
 
   handle: async (context, params) => {
-    const validatedParams = typeSchema.parse(params);
-    return await runAndWait(context, `Typed "${validatedParams.text}" into "${validatedParams.element}"`, async () => {
+    try {
+      const validatedParams = typeSchema.parse(params);
+      
+      // First, verify that the ref actually exists before attempting to type
       const locator = context.refLocator(validatedParams.ref);
-      await locator.fill(validatedParams.text);
-      if (validatedParams.submit)
-        await locator.press('Enter');
-    }, true);
+      const count = await locator.count();
+      
+      if (count === 0) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Error: Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
+          }],
+          isError: true
+        };
+      }
+      
+      return await runAndWait(context, `Typed "${validatedParams.text}" into "${validatedParams.element}"`, async () => {
+        await locator.fill(validatedParams.text);
+        if (validatedParams.submit)
+          await locator.press('Enter');
+      }, true);
+    } catch (error: any) {
+      console.error(`Error in browser_type: ${error}`);
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `Error typing text: ${error.message || String(error)}. The element might not be editable or the page may have changed. Try using browser_snapshot to refresh the page data.` 
+        }],
+        isError: true
+      };
+    }
   },
 };
 
@@ -137,11 +251,36 @@ export const selectOption: Tool = {
   },
 
   handle: async (context, params) => {
-    const validatedParams = selectOptionSchema.parse(params);
-    return await runAndWait(context, `Selected option in "${validatedParams.element}"`, async () => {
+    try {
+      const validatedParams = selectOptionSchema.parse(params);
+      
+      // First, verify that the ref actually exists before attempting to select
       const locator = context.refLocator(validatedParams.ref);
-      await locator.selectOption(validatedParams.values);
-    }, true);
+      const count = await locator.count();
+      
+      if (count === 0) {
+        return {
+          content: [{ 
+            type: 'text', 
+            text: `Error: Dropdown "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
+          }],
+          isError: true
+        };
+      }
+      
+      return await runAndWait(context, `Selected option in "${validatedParams.element}"`, async () => {
+        await locator.selectOption(validatedParams.values);
+      }, true);
+    } catch (error: any) {
+      console.error(`Error in browser_select_option: ${error}`);
+      return {
+        content: [{ 
+          type: 'text', 
+          text: `Error selecting option: ${error.message || String(error)}. The element might not be a valid dropdown or the options may not exist. Try using browser_snapshot to refresh the page data.` 
+        }],
+        isError: true
+      };
+    }
   },
 };
 

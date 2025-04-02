@@ -74,13 +74,30 @@ async function waitForCompletion<R>(page: playwright.Page, callback: () => Promi
 export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false, compact: boolean = false): Promise<ToolResult> {
   const page = context.existingPage();
   const dismissFileChooser = context.hasFileChooser();
-  await waitForCompletion(page, () => callback(page));
-  if (dismissFileChooser)
-    context.clearFileChooser();
-  const result: ToolResult = snapshot ? await captureAriaSnapshot(context, status, compact) : {
-    content: [{ type: 'text', text: status }],
-  };
-  return result;
+  
+  try {
+    await waitForCompletion(page, () => callback(page));
+    if (dismissFileChooser)
+      context.clearFileChooser();
+    
+    // Success case
+    const result: ToolResult = snapshot ? await captureAriaSnapshot(context, status, compact) : {
+      content: [{ type: 'text', text: status }],
+    };
+    return result;
+  } catch (error: any) {
+    // Error case - provide meaningful error message
+    console.error(`Error executing action: ${error}`);
+    
+    // Return a formatted error response
+    return {
+      content: [{ 
+        type: 'text', 
+        text: `Action failed: ${status}\nError: ${error.message || String(error)}\n\nTip: You may need to take a new snapshot with browser_snapshot before trying again.`
+      }],
+      isError: true
+    };
+  }
 }
 
 export async function captureAriaSnapshot(
