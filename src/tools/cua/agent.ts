@@ -66,7 +66,14 @@ interface CUAReasoningItem {
   summary: any[];
 }
 
-type CUAItem = CUAMessage | CUAComputerCall | CUAComputerCallOutput | CUAMessageItem | CUAReasoningItem;
+// OpenAI CUA format output_text type
+interface CUAOutputTextItem {
+  type: 'output_text';
+  text: string;
+  annotations?: any[];
+}
+
+type CUAItem = CUAMessage | CUAComputerCall | CUAComputerCallOutput | CUAMessageItem | CUAReasoningItem | CUAOutputTextItem;
 
 interface CUAResponse {
   output: CUAItem[];
@@ -486,6 +493,12 @@ async function processCUAItems(
       session.logs.push(`CUA message: ${JSON.stringify(item.content)}`);
     }
     
+    // Handle output_text items (CUA format)
+    if ('type' in item && item.type === 'output_text') {
+      console.error(`CUA message: ${JSON.stringify([item])}`); 
+      session.logs.push(`CUA message: ${JSON.stringify([item])}`);
+    }
+    
     // Handle computer call items
     if ('type' in item && item.type === 'computer_call') {
       const callOutputs = await handleComputerCall(item, computer, session);
@@ -798,11 +811,9 @@ async function runCUALoop(
           );
           
           if (!hasComputerCalls && response.output.some(item => 'role' in item && item.role === 'assistant')) {
-            // End of conversation, update session status
+            // Mark session as completed but don't end it - allow it to continue with future replies
             session.status = 'completed';
-            session.endTime = Date.now();
-            session.runningTime = session.endTime - session.startTime;
-            console.error('CUA session completed');
+            console.error('CUA session waiting for next user input');
             break;
           }
         }
@@ -1533,11 +1544,9 @@ export const agentReply: Tool = {
                   );
                   
                   if (!hasComputerCalls && response.output.some(item => 'role' in item && item.role === 'assistant')) {
-                    // End of conversation
+                    // Just mark as completed but ready for more input
                     session.status = 'completed';
-                    session.endTime = Date.now();
-                    session.runningTime = session.endTime - session.startTime;
-                    console.error(`CUA session ${latestSessionId} completed after reply`);
+                    console.error(`CUA session ${latestSessionId} waiting for next user input`);
                     break;
                   }
                 }
