@@ -46,11 +46,11 @@ const cuaTools: Tool[] = [
 ];
 
 const snapshotTools: Tool[] = [
-  // Don't automatically take a snapshot on navigation to save tokens
+  // Don't automatically take snapshots on navigation actions to save tokens
   common.navigate(false), 
-  common.goBack(true),
-  common.goForward(true),
-  common.chooseFile(true),
+  common.goBack(false),
+  common.goForward(false),
+  common.chooseFile(false),
   snapshot.snapshot,
   snapshot.click,
   snapshot.hover,
