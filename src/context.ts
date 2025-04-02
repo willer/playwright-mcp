@@ -300,8 +300,15 @@ export class Context {
             );
             
             const args = [];
-            const src = await frame.owner().getAttribute('src');
-            if (src) args.push(`src=${src}`);
+            // Use locator attributes directly since owner() doesn't exist on Page | FrameLocator
+            // This is a safer approach that works with both Page and FrameLocator types
+            try {
+              const frameElement = page.locator('iframe').nth(index);
+              const src = await frameElement.getAttribute('src');
+              if (src) args.push(`src=${src}`);
+            } catch (e) {
+              // Ignore attribute errors
+            }
             
             return `\n# iframe ${args.join(' ')}\n` + 
               snapshots.join('\n').replaceAll('[ref=', `[ref=f${index}`);
