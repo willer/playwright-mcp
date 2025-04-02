@@ -223,6 +223,93 @@ export class Context {
 
     return snapshots.join('\n');
   }
+  
+  async compactSnapshot() {
+    const page = this.existingPage();
+    
+    // Find the most important interactive elements to include in compact mode
+    const interactiveSelectors = [
+      'a[href]',                // Links
+      'button',                 // Buttons
+      'input',                  // Input fields
+      'select',                 // Dropdowns
+      'textarea',               // Text areas
+      '[role="button"]',        // ARIA buttons
+      '[role="link"]',          // ARIA links
+      '[role="tab"]',           // ARIA tabs
+      '[role="menuitem"]',      // ARIA menu items
+      '[role="checkbox"]',      // ARIA checkboxes
+      '[role="radio"]'          // ARIA radio buttons
+    ];
+    
+    // Create a combined selector that matches any interactive element
+    const combinedSelector = interactiveSelectors.join(',');
+    
+    try {
+      // Collect all visible interactive elements
+      const interactiveElements = await page.locator(combinedSelector).filter({ visible: true }).all();
+      const visibleFrames = await page.locator('iframe').filter({ visible: true }).all();
+      this._lastSnapshotFrames = visibleFrames.map(frame => frame.contentFrame());
+      
+      // Take snapshots of just the interactive elements
+      const mainSnapshot = await Promise.all(
+        interactiveElements.map(async (element) => {
+          try {
+            // Get a snapshot of just this element
+            const snapshot = await element.ariaSnapshot({ ref: true });
+            return snapshot;
+          } catch (e) {
+            // Skip elements that can't be snapshot
+            return '';
+          }
+        })
+      );
+      
+      // Include iframe interactive elements too (simplified)
+      const frameSnapshots = await Promise.all(
+        this._lastSnapshotFrames.map(async (frame, index) => {
+          try {
+            // Only get interactive elements within frame
+            const frameElements = await frame.locator(combinedSelector).filter({ visible: true }).all();
+            if (frameElements.length === 0) return '';
+            
+            const snapshots = await Promise.all(
+              frameElements.map(element => element.ariaSnapshot({ ref: true }))
+            );
+            
+            const args = [];
+            const src = await frame.owner().getAttribute('src');
+            if (src) args.push(`src=${src}`);
+            
+            return `\n# iframe ${args.join(' ')}\n` + 
+              snapshots.join('\n').replaceAll('[ref=', `[ref=f${index}`);
+          } catch (e) {
+            return '';
+          }
+        })
+      );
+      
+      // Create a compact description of the page
+      const pageInfo = [
+        `page: ${await page.title()}`,
+        `url: ${page.url()}`,
+        `interactive_elements: ${interactiveElements.length}`,
+        `frames: ${visibleFrames.length}`,
+        '',
+        '# Interactive Elements:'
+      ].join('\n');
+      
+      // Combine all snapshots
+      return pageInfo + '\n' + 
+        mainSnapshot.filter(Boolean).join('\n') + '\n' + 
+        frameSnapshots.filter(Boolean).join('\n');
+      
+    } catch (error) {
+      console.error('Error creating compact snapshot:', error);
+      // Fallback to just basic page info if something goes wrong
+      return `page: ${await page.title()}\nurl: ${page.url()}\nerror: Could not create interactive elements snapshot`;
+    }
+  }
 
   refLocator(ref: string): playwright.Locator {
     const page = this.existingPage();

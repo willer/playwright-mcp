@@ -1190,18 +1190,26 @@ export const agentStatus: Tool = {
 // Agent log schema
 const agentLogSchema = z.object({
   includeImages: z.boolean().optional().describe('EXPENSIVE: Whether to include images in the log (defaults to false). Including images uses many tokens and should be avoided unless necessary'),
+  maxMessages: z.number().optional().default(2).describe('Maximum number of recent conversation messages to include (defaults to 2)'),
+  maxLogs: z.number().optional().default(5).describe('Maximum number of recent log entries to include (defaults to 5)'),
+  maxActions: z.number().optional().default(3).describe('Maximum number of recent actions to include (defaults to 3)'),
 });
 
 export const agentLog: Tool = {
   schema: {
     name: 'agent_log',
-    description: 'Get the complete log of an agent session. By default, does NOT include screenshots to save tokens.',
+    description: 'Get a summary log of an agent session. Returns minimal data by default to conserve tokens: only 2 recent messages, 5 log entries, and 3 actions. Customize with maxMessages, maxLogs, and maxActions parameters. Does NOT include screenshots by default.',
     inputSchema: zodToJsonSchema(agentLogSchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentLogSchema.parse(params);
-    const { includeImages = false } = validatedParams;
+    const { 
+      includeImages = false,
+      maxMessages = 2,
+      maxLogs = 5,
+      maxActions = 3
+    } = validatedParams;
 
     // Get the most recent session
     const sessionEntries = Array.from(sessions.entries());
@@ -1245,15 +1253,22 @@ export const agentLog: Tool = {
     
     // Return logs as formatted text entries rather than a big JSON blob
     const content = [
-      { type: 'text' as const, text: `Session Summary: ${JSON.stringify(summaryResult, null, 2)}` },
-      { type: 'text' as const, text: `\nRecent Actions (${Math.min(5, formattedActionLog.length)} of ${formattedActionLog.length}):\n${JSON.stringify(formattedActionLog.slice(-5), null, 2)}` }
+      { type: 'text' as const, text: `Session Summary: ${JSON.stringify(summaryResult, null, 2)}` }
     ];
     
-    // Add the recent log entries
-    if (session.logs.length > 0) {
+    // Add only a limited number of recent actions to save tokens
+    if (formattedActionLog.length > 0 && maxActions > 0) {
       content.push({ 
         type: 'text' as const, 
-        text: `\nRecent Logs (${Math.min(10, session.logs.length)} of ${session.logs.length}):\n${session.logs.slice(-10).join('\n')}` 
+        text: `\nRecent Actions (${Math.min(maxActions, formattedActionLog.length)} of ${formattedActionLog.length}):\n${JSON.stringify(formattedActionLog.slice(-maxActions), null, 2)}` 
+      });
+    }
+    
+    // Add a limited number of recent log entries
+    if (session.logs.length > 0 && maxLogs > 0) {
+      content.push({ 
+        type: 'text' as const, 
+        text: `\nRecent Logs (${Math.min(maxLogs, session.logs.length)} of ${session.logs.length}):\n${session.logs.slice(-maxLogs).join('\n')}` 
       });
     }
     
@@ -1275,14 +1290,14 @@ export const agentLog: Tool = {
       }
     }
     
-    // Show just the most recent conversation entries
-    const recentConversation = conversation.slice(-6);
+    // Show just the most recent conversation entries, limited by maxMessages
+    const recentConversation = maxMessages > 0 ? conversation.slice(-maxMessages) : [];
     
     if (recentConversation.length > 0) {
       content.push({ 
         type: 'text' as const, 
-        text: `\nRecent Conversation:\n${recentConversation.map(msg => 
-          `${msg.role === 'user' ? '👤 User' : '🤖 CUA'}: ${msg.text}`
+        text: `\nRecent Conversation (${recentConversation.length} of ${conversation.length}):\n${recentConversation.map(msg => 
+          `${msg.role === 'user' ? '👤 User' : '🤖 CUA'}: ${msg.text.substring(0, 100)}${msg.text.length > 100 ? '...' : ''}`
         ).join('\n\n')}` 
       });
     }

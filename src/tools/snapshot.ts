@@ -22,15 +22,20 @@ import { captureAriaSnapshot, runAndWait } from './utils';
 import type * as playwright from 'playwright';
 import type { Tool } from './tool';
 
+const snapshotSchema = z.object({
+  compact: z.boolean().optional().default(true).describe('Whether to return a compact snapshot to save tokens (defaults to true)')
+});
+
 export const snapshot: Tool = {
   schema: {
     name: 'browser_snapshot',
-    description: 'Capture accessibility snapshot of the current page. Use when taking direct control of the browser if agent_start is not suitable for the task.',
-    inputSchema: zodToJsonSchema(z.object({})),
+    description: 'EFFICIENT: Capture accessibility snapshot of the current page showing only interactive elements by default. Set compact=false for full page details (uses many more tokens). Use after navigation actions.',
+    inputSchema: zodToJsonSchema(snapshotSchema),
   },
 
-  handle: async context => {
-    return await captureAriaSnapshot(context);
+  handle: async (context, params) => {
+    const validatedParams = snapshotSchema.parse(params);
+    return await captureAriaSnapshot(context, '', validatedParams.compact);
   },
 };
 

@@ -71,19 +71,19 @@ async function waitForCompletion<R>(page: playwright.Page, callback: () => Promi
   }
 }
 
-export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false): Promise<ToolResult> {
+export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false, compact: boolean = true): Promise<ToolResult> {
   const page = context.existingPage();
   const dismissFileChooser = context.hasFileChooser();
   await waitForCompletion(page, () => callback(page));
   if (dismissFileChooser)
     context.clearFileChooser();
-  const result: ToolResult = snapshot ? await captureAriaSnapshot(context, status) : {
+  const result: ToolResult = snapshot ? await captureAriaSnapshot(context, status, compact) : {
     content: [{ type: 'text', text: status }],
   };
   return result;
 }
 
-export async function captureAriaSnapshot(context: Context, status: string = ''): Promise<ToolResult> {
+export async function captureAriaSnapshot(context: Context, status: string = '', compact: boolean = false): Promise<ToolResult> {
   const page = context.existingPage();
   const lines = [];
   if (status)
@@ -95,13 +95,29 @@ export async function captureAriaSnapshot(context: Context, status: string = '')
   );
   if (context.hasFileChooser())
     lines.push(`- There is a file chooser visible that requires browser_choose_file to be called`);
-  lines.push(
-      `- Page Snapshot`,
+  
+  if (compact) {
+    // In compact mode, we'll only include the essential interactive elements
+    // to significantly reduce token usage while still providing functionality
+    lines.push(
+      `- Mode: Compact snapshot (to save tokens)`,
+      `- For full snapshot, use browser_snapshot with compact=false`,
+      '```yaml',
+      await context.compactSnapshot(), // Need to implement this in context.ts
+      '```',
+      ''
+    );
+  } else {
+    // Full detailed snapshot (original behavior)
+    lines.push(
+      `- Mode: Full snapshot (uses more tokens)`,
       '```yaml',
       await context.allFramesSnapshot(),
       '```',
       ''
-  );
+    );
+  }
+  
   return {
     content: [{ type: 'text', text: lines.join('\n') }],
   };
