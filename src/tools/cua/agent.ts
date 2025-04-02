@@ -202,6 +202,53 @@ class OpenAIClient {
   }
 }
 
+// Helper function to extract message info without image data
+function getLastMessageInfo(items: CUAItem[]): { type: string; summary: string } {
+  if (items.length === 0) {
+    return { type: 'none', summary: 'No messages' };
+  }
+  
+  const lastItem = items[items.length - 1];
+  
+  if ('role' in lastItem) {
+    if (lastItem.role === 'user') {
+      return { 
+        type: 'user_message', 
+        summary: typeof lastItem.content === 'string' ? `User: ${lastItem.content.substring(0, 50)}${lastItem.content.length > 50 ? '...' : ''}` : 'User message' 
+      };
+    } else if (lastItem.role === 'assistant') {
+      return { 
+        type: 'assistant_message', 
+        summary: typeof lastItem.content === 'string' ? `Assistant: ${lastItem.content.substring(0, 50)}${lastItem.content.length > 50 ? '...' : ''}` : 'Assistant message' 
+      };
+    }
+  } else if ('type' in lastItem) {
+    if (lastItem.type === 'output_text') {
+      return { 
+        type: 'cua_message', 
+        summary: `CUA: ${lastItem.text.substring(0, 50)}${lastItem.text.length > 50 ? '...' : ''}` 
+      };
+    } else if (lastItem.type === 'computer_call') {
+      return { 
+        type: 'computer_action', 
+        summary: `Action: ${lastItem.action.type}` 
+      };
+    } else if (lastItem.type === 'computer_call_output') {
+      return { 
+        type: 'screenshot', 
+        summary: 'Screenshot taken' 
+      };
+    } else if (lastItem.type === 'message') {
+      return { 
+        type: 'system_message', 
+        summary: lastItem.content && lastItem.content[0] ? `System: ${lastItem.content[0].text.substring(0, 50)}${lastItem.content[0].text.length > 50 ? '...' : ''}` : 'System message'
+      };
+    }
+  }
+  
+  return { type: 'unknown', summary: 'Unknown message type' };
+}
+
 // Handle a computer call from the CUA
 async function handleComputerCall(
   item: CUAComputerCall, 
@@ -1107,7 +1154,15 @@ export const agentStatus: Tool = {
     const failedActions = session.actionLog.filter(entry => !entry.success).length;
     const totalActions = session.actionLog.length;
 
-    // Get the current status
+    // Get the last action if available
+    const lastAction = session.actionLog.length > 0 
+      ? session.actionLog[session.actionLog.length - 1]
+      : null;
+    
+    // Extract the last message (without any image data)
+    const lastMessageInfo = getLastMessageInfo(session.items);
+    
+    // Get the current status (minimal information, no images)
     return {
       content: [{
         type: 'text' as const,
@@ -1116,15 +1171,15 @@ export const agentStatus: Tool = {
           runningTime: session.status === 'running'
             ? Date.now() - session.startTime
             : session.runningTime,
-          actionSummary: {
-            total: totalActions,
-            successful: successfulActions,
-            failed: failedActions,
-            recentActions: recentActions
-          },
-          lastMessage: session.items.length > 0 
-            ? session.items[session.items.length - 1] 
-            : null,
+          lastAction: lastAction ? {
+            action: lastAction.action,
+            details: lastAction.details,
+            success: lastAction.success,
+            time: new Date(lastAction.timestamp).toISOString()
+          } : null,
+          messageWaiting: session.status === 'completed',
+          lastMessageType: lastMessageInfo.type,
+          lastMessageSummary: lastMessageInfo.summary,
           error: session.error
         })
       }],
