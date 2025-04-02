@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Copyright (c) Microsoft Corporation.
  *
@@ -15,22 +14,23 @@
  * limitations under the License.
  */
 
-// Check if the lib directory exists, if not, build it
-const fs = require('fs');
-const path = require('path');
-const { execSync } = require('child_process');
+import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
-const libDir = path.join(__dirname, 'lib');
+import type { Tool } from './tool';
 
-if (!fs.existsSync(libDir) || !fs.existsSync(path.join(libDir, 'program.js'))) {
-  console.log('Building TypeScript files...');
-  try {
-    execSync('npm install && npm run build', { stdio: 'inherit', cwd: __dirname });
-    console.log('Build complete.');
-  } catch (error) {
-    console.error('Error building project:', error);
-    process.exit(1);
-  }
-}
+export const console: Tool = {
+  schema: {
+    name: 'browser_console',
+    description: 'View the page console messages',
+    inputSchema: zodToJsonSchema(z.object({})),
+  },
 
-require('./lib/program');
+  handle: async context => {
+    const messages = await context.console();
+    const log = messages.map(message => `[${message.type().toUpperCase()}] ${message.text()}`).join('\n');
+    return {
+      content: [{ type: 'text', text: log }],
+    };
+  },
+};

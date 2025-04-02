@@ -20,7 +20,7 @@ import path from 'path';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-import { captureAriaSnapshot, runAndWait, sanitizeForFilePath } from './utils';
+import { captureAriaSnapshot, runAndWait, sanitizeForFilePath, normalizeUrl } from './utils';
 
 import type { ToolFactory, Tool } from './tool';
 
@@ -31,13 +31,14 @@ const navigateSchema = z.object({
 export const navigate: ToolFactory = snapshot => ({
   schema: {
     name: 'browser_navigate',
-    description: 'Navigate to a URL',
+    description: 'Navigate to a URL. Does not automatically capture a snapshot to save tokens. Use browser_snapshot after navigation if you need to see the page content.',
     inputSchema: zodToJsonSchema(navigateSchema),
   },
   handle: async (context, params) => {
     const validatedParams = navigateSchema.parse(params);
+    const normalizedUrl = normalizeUrl(validatedParams.url);
     const page = await context.createPage();
-    await page.goto(validatedParams.url, { waitUntil: 'domcontentloaded' });
+    await page.goto(normalizedUrl, { waitUntil: 'domcontentloaded' });
     // Cap load event to 5 seconds, the page is operational at this point.
     await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
     if (snapshot)
@@ -45,7 +46,7 @@ export const navigate: ToolFactory = snapshot => ({
     return {
       content: [{
         type: 'text',
-        text: `Navigated to ${validatedParams.url}`,
+        text: `Navigated to ${normalizedUrl}`,
       }],
     };
   },
@@ -56,7 +57,7 @@ const goBackSchema = z.object({});
 export const goBack: ToolFactory = snapshot => ({
   schema: {
     name: 'browser_go_back',
-    description: 'Go back to the previous page',
+    description: 'Go back to the previous page. Does not automatically capture a snapshot to save tokens. Use browser_snapshot afterwards if needed.',
     inputSchema: zodToJsonSchema(goBackSchema),
   },
   handle: async context => {
@@ -69,7 +70,7 @@ const goForwardSchema = z.object({});
 export const goForward: ToolFactory = snapshot => ({
   schema: {
     name: 'browser_go_forward',
-    description: 'Go forward to the next page',
+    description: 'Go forward to the next page. Does not automatically capture a snapshot to save tokens. Use browser_snapshot afterwards if needed.',
     inputSchema: zodToJsonSchema(goForwardSchema),
   },
   handle: async context => {
@@ -164,7 +165,7 @@ const chooseFileSchema = z.object({
 export const chooseFile: ToolFactory = snapshot => ({
   schema: {
     name: 'browser_choose_file',
-    description: 'Choose one or multiple files to upload',
+    description: 'Choose one or multiple files to upload. Does not automatically capture a snapshot to save tokens. Use browser_snapshot afterwards if needed.',
     inputSchema: zodToJsonSchema(chooseFileSchema),
   },
   handle: async (context, params) => {

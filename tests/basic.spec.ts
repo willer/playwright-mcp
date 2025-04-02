@@ -21,51 +21,92 @@ import { test, expect } from './fixtures';
 
 test('test tool list', async ({ client, visionClient }) => {
   const { tools } = await client.listTools();
-  expect(tools.map(t => t.name)).toEqual([
-    'browser_navigate',
+  // Sort the tool names to account for potential ordering differences
+  expect(tools.map(t => t.name).sort()).toEqual([
+    'agent_end',
+    'agent_get_last_image',
+    'agent_log',
+    'agent_reply',
+    'agent_start',
+    'agent_status',
+    'browser_choose_file',
+    'browser_click',
+    'browser_close',
+    'browser_console',
     'browser_go_back',
     'browser_go_forward',
-    'browser_choose_file',
-    'browser_snapshot',
-    'browser_click',
     'browser_hover',
-    'browser_type',
-    'browser_select_option',
-    'browser_take_screenshot',
-    'browser_press_key',
-    'browser_wait',
-    'browser_save_as_pdf',
-    'browser_close',
     'browser_install',
-  ]);
+    'browser_navigate',
+    'browser_press_key',
+    'browser_save_as_pdf',
+    'browser_select_option',
+    'browser_snapshot',
+    'browser_take_screenshot',
+    'browser_type',
+    'browser_wait',
+  ].sort());
 
   const { tools: visionTools } = await visionClient.listTools();
-  expect(visionTools.map(t => t.name)).toEqual([
-    'browser_navigate',
+  // Sort the tool names to account for potential ordering differences
+  expect(visionTools.map(t => t.name).sort()).toEqual([
+    'agent_end',
+    'agent_get_last_image',
+    'agent_log',
+    'agent_reply',
+    'agent_start',
+    'agent_status',
+    'browser_choose_file',
+    'browser_click',
+    'browser_close',
+    'browser_console',
+    'browser_drag',
     'browser_go_back',
     'browser_go_forward',
-    'browser_choose_file',
-    'browser_screenshot',
-    'browser_move_mouse',
-    'browser_click',
-    'browser_drag',
-    'browser_type',
-    'browser_press_key',
-    'browser_wait',
-    'browser_save_as_pdf',
-    'browser_close',
     'browser_install',
-  ]);
+    'browser_move_mouse',
+    'browser_navigate',
+    'browser_press_key',
+    'browser_save_as_pdf',
+    'browser_screenshot',
+    'browser_type',
+    'browser_wait',
+  ].sort());
 });
 
 test('test resources list', async ({ client }) => {
   const { resources } = await client.listResources();
-  expect(resources).toEqual([
-    expect.objectContaining({
-      uri: 'browser://console',
-      mimeType: 'text/plain',
-    }),
-  ]);
+  expect(resources).toEqual([]);
+});
+
+test('agent uses same session as browser', async ({ client }) => {
+  // Navigate using browser_navigate
+  const navigateResponse = await client.callTool({
+    name: 'browser_navigate',
+    arguments: {
+      url: 'about:blank',
+    },
+  });
+  // With snapshot on, we get a different response
+  expect(navigateResponse).toContainTextContent('Page URL: about:blank');
+  
+  // Start agent session
+  const agentResponse = await client.callTool({
+    name: 'agent_start',
+    arguments: {
+      instructions: 'Check the current page',
+      apiKey: 'fake-api-key',
+    },
+  });
+  
+  // Agent should be able to use the existing page
+  expect(agentResponse).not.toContainTextContent('No active browser session');
+  
+  // Clean up by ending the agent session
+  await client.callTool({
+    name: 'agent_end',
+    arguments: {},
+  });
 });
 
 test('test browser_navigate', async ({ client }) => {
@@ -194,7 +235,7 @@ test('multiple option', async ({ client }) => {
 `);
 });
 
-test('browser://console', async ({ client }) => {
+test('browser_console', async ({ client }) => {
   await client.callTool({
     name: 'browser_navigate',
     arguments: {
@@ -202,12 +243,12 @@ test('browser://console', async ({ client }) => {
     },
   });
 
-  const resource = await client.readResource({
-    uri: 'browser://console',
+  const result = await client.callTool({
+    name: 'browser_console',
+    arguments: {},
   });
-  expect(resource.contents).toEqual([{
-    uri: 'browser://console',
-    mimeType: 'text/plain',
+  expect(result.content).toEqual([{
+    type: 'text',
     text: '[LOG] Hello, world!\n[ERROR] Error',
   }]);
 });

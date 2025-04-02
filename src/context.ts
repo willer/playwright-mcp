@@ -153,17 +153,51 @@ export class Context {
   private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
     try {
       const browserType = this._options.browserName ? playwright[this._options.browserName] : playwright.chromium;
-      
-      // Ensure launchOptions has args for extensions if not present
+
+      // Set additional options for better reliability with persistent contexts
       const launchOptions = {
         ...this._options.launchOptions,
-        args: [...(this._options.launchOptions?.args || []), '--enable-extensions']
+        args: [
+          ...(this._options.launchOptions?.args || []),
+          '--enable-extensions',
+          '--no-sandbox',
+          // Completely disable background networking
+          '--disable-background-networking',
+          // Disable various background services
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          // Disable component updates to prevent background processes
+          '--disable-component-update',
+          // Disable feature that could cause conflicts
+          '--disable-features=TranslateUI',
+          // Disable first-run dialogs, welcome pages, etc.
+          '--no-first-run',
+        ],
+        handleSIGINT: true,  // Ensure browser process is properly cleaned up on SIGINT
+        handleSIGTERM: true, // Ensure browser process is properly cleaned up on SIGTERM
+        handleSIGHUP: true,  // Ensure browser process is properly cleaned up on SIGHUP
       };
-      
+
+      // Playwright automatically adds the --user-data-dir argument,
+      // so we filter out any user-data-dir flags if they exist to prevent duplicates
+      if (launchOptions.args) {
+        launchOptions.args = launchOptions.args.filter(arg =>
+          !arg.startsWith('--user-data-dir=') &&
+          !arg.startsWith('--user-data-dir-name=')
+        );
+      }
+
+      // Launch the browser with persistent context
       return await browserType.launchPersistentContext(this._options.userDataDir, launchOptions);
     } catch (error: any) {
       if (error.message.includes('Executable doesn\'t exist'))
         throw new Error(`Browser specified in your config is not installed. Either install it (likely) or change the config.`);
+      if (error.message.includes('Target page, context or browser has been closed')) {
+        console.error('Persistent context issue detected. This may be due to a stale browser process.');
+        console.error('Error details:', error.message);
+        throw new Error('Browser launch failed. Try removing the profile directory at: ' + this._options.userDataDir);
+      }
+      console.error('Failed to launch browser:', error);
       throw error;
     }
   }
@@ -210,6 +244,93 @@ export class Context {
     };
     await visit(snapshot.contents);
     return snapshot;
+  }
+  
+  async compactSnapshot() {
+    const page = this.existingPage();
+    
+    // Find the most important interactive elements to include in compact mode
+    const interactiveSelectors = [
+      'a[href]',                // Links
+      'button',                 // Buttons
+      'input',                  // Input fields
+      'select',                 // Dropdowns
+      'textarea',               // Text areas
+      '[role="button"]',        // ARIA buttons
+      '[role="link"]',          // ARIA links
+      '[role="tab"]',           // ARIA tabs
+      '[role="menuitem"]',      // ARIA menu items
+      '[role="checkbox"]',      // ARIA checkboxes
+      '[role="radio"]'          // ARIA radio buttons
+    ];
+    
+    // Create a combined selector that matches any interactive element
+    const combinedSelector = interactiveSelectors.join(',');
+    
+    try {
+      // Collect all visible interactive elements
+      const interactiveElements = await page.locator(combinedSelector).filter({ visible: true }).all();
+      const visibleFrames = await page.locator('iframe').filter({ visible: true }).all();
+      this._lastSnapshotFrames = visibleFrames.map(frame => frame.contentFrame());
+      
+      // Take snapshots of just the interactive elements
+      const mainSnapshot = await Promise.all(
+        interactiveElements.map(async (element) => {
+          try {
+            // Get a snapshot of just this element
+            const snapshot = await element.ariaSnapshot({ ref: true });
+            return snapshot;
+          } catch (e) {
+            // Skip elements that can't be snapshot
+            return '';
+          }
+        })
+      );
+      
+      // Include iframe interactive elements too (simplified)
+      const frameSnapshots = await Promise.all(
+        this._lastSnapshotFrames.map(async (frame, index) => {
+          try {
+            // Only get interactive elements within frame
+            const frameElements = await frame.locator(combinedSelector).filter({ visible: true }).all();
+            if (frameElements.length === 0) return '';
+            
+            const snapshots = await Promise.all(
+              frameElements.map(element => element.ariaSnapshot({ ref: true }))
+            );
+            
+            const args = [];
+            const src = await frame.owner().getAttribute('src');
+            if (src) args.push(`src=${src}`);
+            
+            return `\n# iframe ${args.join(' ')}\n` + 
+              snapshots.join('\n').replaceAll('[ref=', `[ref=f${index}`);
+          } catch (e) {
+            return '';
+          }
+        })
+      );
+      
+      // Create a compact description of the page
+      const pageInfo = [
+        `page: ${await page.title()}`,
+        `url: ${page.url()}`,
+        `interactive_elements: ${interactiveElements.length}`,
+        `frames: ${visibleFrames.length}`,
+        '',
+        '# Interactive Elements:'
+      ].join('\n');
+      
+      // Combine all snapshots
+      return pageInfo + '\n' + 
+        mainSnapshot.filter(Boolean).join('\n') + '\n' + 
+        frameSnapshots.filter(Boolean).join('\n');
+      
+    } catch (error) {
+      console.error('Error creating compact snapshot:', error);
+      // Fallback to just basic page info if something goes wrong
+      return `page: ${await page.title()}\nurl: ${page.url()}\nerror: Could not create interactive elements snapshot`;
+    }
   }
 
   refLocator(ref: string): playwright.Locator {

@@ -14,22 +14,5 @@
  * limitations under the License.
  */
 
-import type { Resource } from './resource';
-
-export const console: Resource = {
-  schema: {
-    uri: 'browser://console',
-    name: 'Page console',
-    mimeType: 'text/plain',
-  },
-
-  read: async (context, uri) => {
-    const messages = await context.console();
-    const log = messages.map(message => `[${message.type().toUpperCase()}] ${message.text()}`).join('\n');
-    return [{
-      uri,
-      mimeType: 'text/plain',
-      text: log
-    }];
-  },
-};
+export { agentStart, agentStatus, agentLog, agentEnd, agentGetLastImage, agentReply } from './agent';
+export { PlaywrightComputer } from './computer';
