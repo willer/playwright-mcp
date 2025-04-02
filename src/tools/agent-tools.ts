@@ -137,25 +137,29 @@ export const agentStatus: Tool = {
     description: 'Check the status of a running agent session',
     inputSchema: {
       type: 'object',
-      required: ['sessionId'],
       properties: {
-        sessionId: { type: 'string' },
         waitSeconds: { type: 'number' }
       }
     }
   },
   async handle(context: Context, params?: Record<string, any>): Promise<ToolResult> {
-    if (!params || !params.sessionId) {
-      return {
-        content: [{ type: 'text', text: 'Missing required parameter: sessionId' }],
-        isError: true
-      };
-    }
     if (!agentManager)
       throw new Error('Agent manager not initialized');
 
+    const { waitSeconds } = params || {};
 
-    const { sessionId, waitSeconds } = params;
+    // Get the most recent session
+    const sessionEntries = Array.from(agentManager.getAllSessions());
+    if (sessionEntries.length === 0) {
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ error: 'No active session found' }) }],
+        isError: true,
+      };
+    }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [sessionId, session] = sessionEntries[0];
 
     // If waitSeconds is specified, wait for completion or timeout
     if (waitSeconds) {
@@ -163,20 +167,10 @@ export const agentStatus: Tool = {
       const startTime = Date.now();
 
       while (Date.now() - startTime < maxWaitTime) {
-        const session = agentManager.getSession(sessionId);
-
-        if (!session) {
-          return {
-            content: [{ type: 'text', text: `Session ${sessionId} not found` }],
-            isError: true
-          };
-        }
-
         // If the session is completed or errored, return the status
         if (session.status !== 'running') {
           return {
             content: [{ type: 'text', text: JSON.stringify({
-              sessionId,
               status: session.status,
               runningTime: session.runningTime,
               lastMessage: session.logs[session.logs.length - 1],
@@ -190,37 +184,18 @@ export const agentStatus: Tool = {
       }
 
       // If we get here, we timed out
-      const timeoutSession = agentManager.getSession(sessionId);
-      if (!timeoutSession) {
-        return {
-          content: [{ type: 'text', text: `Session ${sessionId} not found` }],
-          isError: true
-        };
-      }
-
       return {
         content: [{ type: 'text', text: JSON.stringify({
-          sessionId,
-          status: timeoutSession.status,
-          timeElapsed: Date.now() - timeoutSession.startTime,
+          status: session.status,
+          timeElapsed: Date.now() - session.startTime,
           message: 'Still running'
         }) }]
       };
     }
 
     // If no waitSeconds, just return the current status
-    const session = agentManager.getSession(sessionId);
-
-    if (!session) {
-      return {
-        content: [{ type: 'text', text: `Session ${sessionId} not found` }],
-        isError: true
-      };
-    }
-
     return {
       content: [{ type: 'text', text: JSON.stringify({
-        sessionId,
         status: session.status,
         timeElapsed: session.status === 'running'
           ? Date.now() - session.startTime
@@ -243,37 +218,31 @@ export const agentLog: Tool = {
     description: 'Get the complete log of an agent session',
     inputSchema: {
       type: 'object',
-      required: ['sessionId'],
       properties: {
-        sessionId: { type: 'string' },
         includeImages: { type: 'boolean' }
       }
     }
   },
   async handle(context: Context, params?: Record<string, any>): Promise<ToolResult> {
-    if (!params || !params.sessionId) {
-      return {
-        content: [{ type: 'text', text: 'Missing required parameter: sessionId' }],
-        isError: true
-      };
-    }
     if (!agentManager)
       throw new Error('Agent manager not initialized');
 
+    const { includeImages = false } = params || {};
 
-    const { sessionId, includeImages = false } = params;
-
-    const session = agentManager.getSession(sessionId);
-
-    if (!session) {
+    // Get the most recent session
+    const sessionEntries = Array.from(agentManager.getAllSessions());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text', text: `Session ${sessionId} not found` }],
-        isError: true
+        content: [{ type: 'text', text: JSON.stringify({ error: 'No active session found' }) }],
+        isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [sessionId, session] = sessionEntries[0];
 
     const result: any = {
-      sessionId,
       status: session.status,
       logs: session.logs,
       startTime: new Date(session.startTime).toISOString(),
@@ -286,7 +255,6 @@ export const agentLog: Tool = {
 
     if (includeImages)
       result.images = session.images;
-
 
     return {
       content: [{ type: 'text', text: JSON.stringify(result) }]
@@ -303,35 +271,27 @@ export const agentEnd: Tool = {
     description: 'Forcefully end an agent session',
     inputSchema: {
       type: 'object',
-      required: ['sessionId'],
-      properties: {
-        sessionId: { type: 'string' }
-      }
+      properties: {}
     }
   },
   async handle(context: Context, params?: Record<string, any>): Promise<ToolResult> {
-    if (!params || !params.sessionId) {
-      return {
-        content: [{ type: 'text', text: 'Missing required parameter: sessionId' }],
-        isError: true
-      };
-    }
     if (!agentManager)
       throw new Error('Agent manager not initialized');
 
-
-    const { sessionId } = params;
-    console.error(`[DEBUG] Ending session ${sessionId}`);
-
-    // Get session before ending
-    const sessionBefore = agentManager.getSession(sessionId);
-    if (!sessionBefore) {
+    // Get the most recent session
+    const sessionEntries = Array.from(agentManager.getAllSessions());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text', text: `Session ${sessionId} not found` }],
-        isError: true
+        content: [{ type: 'text', text: JSON.stringify({ error: 'No active session found' }) }],
+        isError: true,
       };
     }
-
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [sessionId, sessionBefore] = sessionEntries[0];
+    
+    console.error(`[DEBUG] Ending session ${sessionId}`);
     console.error(`[DEBUG] Current session status: ${sessionBefore.status}`);
 
     // Force the session to end (regardless of current status)
@@ -339,14 +299,13 @@ export const agentEnd: Tool = {
 
     if (!success) {
       return {
-        content: [{ type: 'text', text: `Failed to end session ${sessionId}` }],
+        content: [{ type: 'text', text: `Failed to end session` }],
         isError: true
       };
     }
 
     return {
       content: [{ type: 'text', text: JSON.stringify({
-        sessionId,
         status: 'ended',
         message: 'Session ended successfully',
         previousStatus: sessionBefore.status
@@ -364,37 +323,29 @@ export const agentGetLastImage: Tool = {
     description: 'Get the last screenshot from an agent session',
     inputSchema: {
       type: 'object',
-      required: ['sessionId'],
-      properties: {
-        sessionId: { type: 'string' }
-      }
+      properties: {}
     }
   },
   async handle(context: Context, params?: Record<string, any>): Promise<ToolResult> {
-    if (!params || !params.sessionId) {
-      return {
-        content: [{ type: 'text', text: 'Missing required parameter: sessionId' }],
-        isError: true
-      };
-    }
     if (!agentManager)
       throw new Error('Agent manager not initialized');
 
-
-    const { sessionId } = params;
-
-    const session = agentManager.getSession(sessionId);
-
-    if (!session) {
+    // Get the most recent session
+    const sessionEntries = Array.from(agentManager.getAllSessions());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text', text: `Session ${sessionId} not found` }],
-        isError: true
+        content: [{ type: 'text', text: JSON.stringify({ error: 'No active session found' }) }],
+        isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [sessionId, session] = sessionEntries[0];
 
     if (session.images.length === 0) {
       return {
-        content: [{ type: 'text', text: `No images available for session ${sessionId}` }],
+        content: [{ type: 'text', text: `No images available for current session` }],
         isError: true
       };
     }
@@ -404,7 +355,6 @@ export const agentGetLastImage: Tool = {
     return {
       content: [
         { type: 'text', text: JSON.stringify({
-          sessionId,
           status: session.status
         }) },
         {
@@ -426,41 +376,44 @@ export const agentReply: Tool = {
     description: 'Send a reply to a running agent session to continue the conversation',
     inputSchema: {
       type: 'object',
-      required: ['sessionId', 'replyText'],
+      required: ['replyText'],
       properties: {
-        sessionId: { type: 'string' },
         replyText: { type: 'string' }
       }
     }
   },
   async handle(context: Context, params?: Record<string, any>): Promise<ToolResult> {
-    if (!params || !params.sessionId || !params.replyText) {
+    if (!params || !params.replyText) {
       return {
-        content: [{ type: 'text', text: 'Missing required parameters: sessionId and/or replyText' }],
+        content: [{ type: 'text', text: 'Missing required parameter: replyText' }],
         isError: true
       };
     }
     if (!agentManager)
       throw new Error('Agent manager not initialized');
 
-
-    const { sessionId, replyText } = params;
-    console.error(`[DEBUG] Sending reply to session ${sessionId}: "${replyText}"`);
-
-    // Get the session before sending the reply
-    const sessionBefore = agentManager.getSession(sessionId);
-    if (!sessionBefore) {
+    const { replyText } = params;
+    
+    // Get the most recent session
+    const sessionEntries = Array.from(agentManager.getAllSessions());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text', text: `Session ${sessionId} not found` }],
-        isError: true
+        content: [{ type: 'text', text: JSON.stringify({ error: 'No active session found' }) }],
+        isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [sessionId, sessionBefore] = sessionEntries[0];
+    
+    console.error(`[DEBUG] Sending reply to session ${sessionId}: "${replyText}"`);
 
     // Sessions in 'completed' status are waiting for more input
     // Sessions in 'running' status can technically accept input too (though that's unusual)
     if (sessionBefore.status !== 'completed' && sessionBefore.status !== 'running') {
       return {
-        content: [{ type: 'text', text: `Session ${sessionId} cannot accept replies (status: ${sessionBefore.status})` }],
+        content: [{ type: 'text', text: `Current session cannot accept replies (status: ${sessionBefore.status})` }],
         isError: true
       };
     }
@@ -470,7 +423,7 @@ export const agentReply: Tool = {
 
     if (!success) {
       return {
-        content: [{ type: 'text', text: `Failed to send reply to session ${sessionId}` }],
+        content: [{ type: 'text', text: `Failed to send reply to current session` }],
         isError: true
       };
     }
@@ -480,7 +433,6 @@ export const agentReply: Tool = {
 
     return {
       content: [{ type: 'text', text: JSON.stringify({
-        sessionId,
         status: sessionAfter ? sessionAfter.status : 'unknown',
         message: 'Reply sent successfully, waiting for response',
         itemCount: sessionAfter ? sessionAfter.items.length : 0

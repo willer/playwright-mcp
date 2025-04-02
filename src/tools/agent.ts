@@ -93,6 +93,13 @@ export class AgentManager {
   getSession(sessionId: string): SessionInfo | undefined {
     return this.sessions.get(sessionId);
   }
+  
+  /**
+   * Get all sessions
+   */
+  getAllSessions(): Map<string, SessionInfo> {
+    return this.sessions;
+  }
 
   /**
    * End a session - this fully terminates the session

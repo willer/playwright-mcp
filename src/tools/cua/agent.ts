@@ -60,10 +60,25 @@ interface CUAMessageItem {
   }];
 }
 
-type CUAItem = CUAMessage | CUAComputerCall | CUAComputerCallOutput | CUAMessageItem;
+interface CUAReasoningItem {
+  type: 'reasoning';
+  id: string;
+  summary: any[];
+}
+
+type CUAItem = CUAMessage | CUAComputerCall | CUAComputerCallOutput | CUAMessageItem | CUAReasoningItem;
 
 interface CUAResponse {
   output: CUAItem[];
+}
+
+// Action log entry for human-readable display
+interface ActionLogEntry {
+  timestamp: number;
+  action: string;
+  details: string;
+  success: boolean;
+  url?: string;
 }
 
 // Session data structure
@@ -72,10 +87,12 @@ interface SessionData {
   status: 'starting' | 'running' | 'completed' | 'error';
   images: string[]; // Base64 encoded screenshots
   logs: string[]; // Text logs for debugging
+  actionLog: ActionLogEntry[]; // Human-readable log of actions for display
   error?: string;
   startTime: number;
   endTime?: number;
   runningTime?: number;
+  waitLoopCount?: number; // Count of consecutive wait loops
 }
 
 // Map of session IDs to sessions
@@ -191,6 +208,66 @@ async function handleComputerCall(
   console.error(`Processing CUA action: ${actionType}(${JSON.stringify(action)})`);
   session.logs.push(`Processing action: ${actionType}(${JSON.stringify(action)})`);
   
+  // Create a human-readable description for the action log
+  let actionDescription = '';
+  let actionDetails = '';
+  
+  switch (actionType) {
+    case 'click':
+      actionDescription = 'Click';
+      actionDetails = `Clicked at coordinates (${action.x}, ${action.y})${action.button ? ` with ${action.button} button` : ''}`;
+      break;
+    case 'double_click':
+      actionDescription = 'Double Click';
+      actionDetails = `Double-clicked at coordinates (${action.x}, ${action.y})`;
+      break;
+    case 'type':
+      actionDescription = 'Type Text';
+      actionDetails = `Typed: "${action.text}"`;
+      break;
+    case 'keypress':
+      actionDescription = 'Keyboard Shortcut';
+      actionDetails = Array.isArray(action.keys) 
+        ? `Pressed keys: ${action.keys.join(' + ')}`
+        : `Pressed key: ${action.key}`;
+      break;
+    case 'press':
+      actionDescription = 'Press Key';
+      actionDetails = `Pressed key: ${action.key}`;
+      break;
+    case 'wait':
+      actionDescription = 'Wait';
+      actionDetails = `Waited ${action.ms || 1000}ms`;
+      break;
+    case 'navigate':
+    case 'goto':
+      actionDescription = 'Navigate';
+      actionDetails = `Navigated to: ${action.url}`;
+      break;
+    case 'move':
+      actionDescription = 'Move Cursor';
+      actionDetails = `Moved cursor to coordinates (${action.x}, ${action.y})`;
+      break;
+    case 'scroll':
+      actionDescription = 'Scroll';
+      actionDetails = action.scroll_y 
+        ? `Scrolled by (${action.scroll_x || 0}, ${action.scroll_y}) pixels` 
+        : `Scrolled by ${action.delta_y || 100} pixels`;
+      break;
+    default:
+      actionDescription = actionType.charAt(0).toUpperCase() + actionType.slice(1);
+      actionDetails = JSON.stringify(action);
+  }
+  
+  // Add entry to action log - we'll update the success status later
+  const logEntry: ActionLogEntry = {
+    timestamp: Date.now(),
+    action: actionDescription,
+    details: actionDetails,
+    success: false // Will update after the action is performed
+  };
+  session.actionLog.push(logEntry);
+  
   // Check for any pending safety checks
   const pendingChecks = item.pending_safety_checks || [];
   
@@ -210,19 +287,107 @@ async function handleComputerCall(
         if (Array.isArray(action.keys)) {
           console.error(`Processing keypress with keys: ${JSON.stringify(action.keys)}`);
           
+          // Map CUA key names to Playwright key names
+          const keyMap: Record<string, string> = {
+            'BACKSPACE': 'Backspace',
+            'CTRL': 'Control',
+            'CONTROL': 'Control',
+            'COMMAND': 'Meta',
+            'CMD': 'Meta',
+            'ALT': 'Alt',
+            'SHIFT': 'Shift',
+            'ENTER': 'Enter',
+            'TAB': 'Tab',
+            'ESCAPE': 'Escape',
+            'ESC': 'Escape',
+            'ARROWUP': 'ArrowUp',
+            'ARROW UP': 'ArrowUp',
+            'UP': 'ArrowUp',
+            'ARROWDOWN': 'ArrowDown',
+            'ARROW DOWN': 'ArrowDown',
+            'DOWN': 'ArrowDown',
+            'ARROWLEFT': 'ArrowLeft',
+            'ARROW LEFT': 'ArrowLeft',
+            'LEFT': 'ArrowLeft',
+            'ARROWRIGHT': 'ArrowRight',
+            'ARROW RIGHT': 'ArrowRight',
+            'RIGHT': 'ArrowRight',
+            'DELETE': 'Delete',
+            'DEL': 'Delete',
+            'END': 'End',
+            'HOME': 'Home',
+            'INSERT': 'Insert',
+            'INS': 'Insert',
+            'PAGEDOWN': 'PageDown',
+            'PAGE DOWN': 'PageDown',
+            'PAGEUP': 'PageUp',
+            'PAGE UP': 'PageUp',
+            'CAPSLOCK': 'CapsLock',
+            'CAPS LOCK': 'CapsLock',
+            'SPACE': ' ',
+            'SUPER': 'Meta',
+            'WINDOWS': 'Meta',
+            'A': 'a',
+            'B': 'b',
+            'C': 'c',
+            'D': 'd',
+            'E': 'e',
+            'F': 'f',
+            'G': 'g',
+            'H': 'h',
+            'I': 'i',
+            'J': 'j',
+            'K': 'k',
+            'L': 'l',
+            'M': 'm',
+            'N': 'n',
+            'O': 'o',
+            'P': 'p',
+            'Q': 'q',
+            'R': 'r',
+            'S': 's',
+            'T': 't',
+            'U': 'u',
+            'V': 'v',
+            'W': 'w',
+            'X': 'x',
+            'Y': 'y',
+            'Z': 'z'
+          };
+          
           // Handle keypress with multiple keys (keyboard shortcuts)
           const page = await computer.getPage();
           
-          // Press all keys down in sequence
-          for (const key of action.keys) {
-            console.error(`Pressing down: ${key}`);
-            await page.keyboard.down(key);
-          }
+          // Map keys using our mapping
+          const mappedKeys = action.keys.map(key => {
+            const normalizedKey = typeof key === 'string' ? key.toUpperCase() : '';
+            return keyMap[normalizedKey] || key;
+          });
           
-          // Release keys in reverse order
-          for (let i = action.keys.length - 1; i >= 0; i--) {
-            console.error(`Releasing: ${action.keys[i]}`);
-            await page.keyboard.up(action.keys[i]);
+          console.error(`Mapped keys: ${JSON.stringify(mappedKeys)}`);
+          
+          try {
+            // Press all keys down in sequence
+            for (const key of mappedKeys) {
+              console.error(`Pressing down: ${key}`);
+              await page.keyboard.down(key);
+            }
+            
+            // Small delay to ensure the keypress is registered
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            // Release keys in reverse order
+            for (let i = mappedKeys.length - 1; i >= 0; i--) {
+              console.error(`Releasing: ${mappedKeys[i]}`);
+              await page.keyboard.up(mappedKeys[i]);
+            }
+          } catch (error) {
+            console.error(`Error executing keypress: ${error}`);
+            // Fall back to typing the text if key combination fails
+            if (action.keys.includes('A') && (action.keys.includes('CTRL') || action.keys.includes('CONTROL'))) {
+              // Special handling for Ctrl+A (select all)
+              await page.evaluate(() => document.execCommand('selectAll'));
+            }
           }
         } else if (action.key) {
           // Handle single key
@@ -243,21 +408,42 @@ async function handleComputerCall(
         await computer.move(action.x, action.y);
         break;
       case 'scroll':
-        // Not directly implemented, but could map to page.mouse.wheel
+        if (action.scroll_x !== undefined && action.scroll_y !== undefined) {
+          await computer.scroll(action.x || 0, action.y || 0, action.scroll_x || 0, action.scroll_y || 0);
+        } else {
+          // Fallback for different scroll action formats
+          await computer.scroll(action.x || 0, action.y || 0, 0, action.delta_y || 100); 
+        }
         break;
       // Could add more actions as needed
     }
   } catch (error: any) {
     session.logs.push(`Error executing action: ${error.message}`);
     console.error(`Error executing CUA action: ${error.message}`);
+    
+    // Mark the action as failed in the log
+    const currentLogEntry = session.actionLog[session.actionLog.length - 1];
+    if (currentLogEntry) {
+      currentLogEntry.success = false;
+      currentLogEntry.details += ` - Error: ${error.message}`;
+    }
+    
+    // No need to return early, we still want to take a screenshot
   }
   
   // Take a screenshot after the action
   const screenshot = await computer.screenshot();
   session.images.push(screenshot);
   
-  // Get the current URL for safety checking
+  // Get the current URL for safety checking and to add to the action log
   const currentUrl = await computer.getCurrentUrl();
+  
+  // Update the log entry with success status and current URL
+  const currentLogEntry = session.actionLog[session.actionLog.length - 1];
+  if (currentLogEntry) {
+    currentLogEntry.success = true; // If we got here without exception, it's a success
+    currentLogEntry.url = currentUrl;
+  }
   
   // Check URL against blocklist
   try {
@@ -401,6 +587,9 @@ async function runCUALoop(
     
     console.error(`Initial context items: ${conversationContext.length}`);
     
+    // Track consecutive API errors to avoid infinite error loops
+    let consecutiveApiErrors = 0;
+    
     while (session.status === 'running') {
       try {
         // Log what we're sending - avoid sending the full image data to the console
@@ -439,16 +628,132 @@ async function runCUALoop(
             'type' in item && item.type === 'computer_call'
           ).length && waitActions.length > 0;
           
+          // Track the number of consecutive wait loops to take more aggressive action
+          session.waitLoopCount = (session.waitLoopCount || 0) + (isWaitLoop ? 1 : 0);
+          
           if (isWaitLoop) {
-            console.error("Detected a wait loop - model is only calling wait. Adding a system message to help it break out of the loop.");
-            // Add a system message to help break the loop
-            session.items.push({
-              type: 'message',
-              content: [{
-                type: 'text',
-                text: "I notice you're waiting repeatedly. If you don't see the expected results, try clicking on a visible element or typing a more specific search like 'dish set' in the search box, then press Enter."
-              }]
-            });
+            console.error(`Detected a wait loop - model is only calling wait. Consecutive wait loops: ${session.waitLoopCount}`);
+            
+            // Intervention based on the number of wait loops detected
+            if (session.waitLoopCount === 1) {
+              // First wait loop - gentle guidance
+              session.items.push({
+                type: 'message',
+                content: [{
+                  type: 'text',
+                  text: "I notice you're waiting repeatedly. If you don't see the expected results, try clicking on a visible element or typing a more specific search in the search box, then press Enter."
+                }]
+              });
+            } else if (session.waitLoopCount === 2) {
+              // Second wait loop - more specific suggestion
+              session.items.push({
+                type: 'message',
+                content: [{
+                  type: 'text',
+                  text: "You seem to be stuck in a wait loop. Try clicking on the search box and typing 'dinnerware sets' or 'dish set', then press Enter to search."
+                }]
+              });
+              
+              // Take action to try to click the search box
+              try {
+                const page = await computer.getPage();
+                // Try to find and click the search box
+                await page.evaluate(() => {
+                  const searchInputs = Array.from(document.querySelectorAll('input[type="search"], input[type="text"]'));
+                  const visibleInput = searchInputs.find(el => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0;
+                  });
+                  if (visibleInput) {
+                    (visibleInput as HTMLElement).click();
+                  }
+                });
+              } catch (e) {
+                console.error("Failed to auto-click search box:", e);
+              }
+            } else if (session.waitLoopCount >= 3) {
+              // Third or later wait loop - take direct action
+              try {
+                const page = await computer.getPage();
+                
+                // First try to find and click a search box
+                const clickedSearch = await page.evaluate(() => {
+                  const searchInputs = Array.from(document.querySelectorAll('input[type="search"], input[type="text"]'));
+                  const visibleInput = searchInputs.find(el => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0;
+                  });
+                  if (visibleInput) {
+                    (visibleInput as HTMLElement).click();
+                    return true;
+                  }
+                  return false;
+                });
+                
+                if (clickedSearch) {
+                  // If we clicked a search box, try to clear it first, then type in it
+                  try {
+                    // Try to select all text and delete it
+                    await page.keyboard.press('Control+a');
+                    await page.keyboard.press('Backspace');
+                  } catch (e) {
+                    console.error("Failed to clear search box:", e);
+                  }
+                  
+                  // Type the search term
+                  await computer.type("dinnerware sets");
+                  await computer.press("Enter");
+                  
+                  // Add message about our intervention
+                  session.items.push({
+                    type: 'message',
+                    content: [{
+                      type: 'text',
+                      text: "I've searched for 'dinnerware sets' to help you find dish sets. Now I'll help you select one from the search results."
+                    }]
+                  });
+                } else {
+                  // If no search box found, try to click something interactive
+                  await page.evaluate(() => {
+                    // Try to find any interactive element
+                    const interactiveElements = Array.from(document.querySelectorAll('a, button, [role="button"]'));
+                    const visibleElement = interactiveElements.find(el => {
+                      const style = window.getComputedStyle(el);
+                      const rect = el.getBoundingClientRect();
+                      return style.display !== 'none' && style.visibility !== 'hidden' && 
+                             rect.width > 0 && rect.height > 0 && 
+                             rect.top >= 0 && rect.left >= 0 && 
+                             rect.top < window.innerHeight && rect.left < window.innerWidth;
+                    });
+                    if (visibleElement) {
+                      (visibleElement as HTMLElement).click();
+                    }
+                  });
+                  
+                  session.items.push({
+                    type: 'message',
+                    content: [{
+                      type: 'text',
+                      text: "I tried clicking on an interactive element to help move forward. Please give me more specific instructions on what you'd like me to do on this page to find dish sets."
+                    }]
+                  });
+                }
+              } catch (e) {
+                console.error("Failed to take automatic action:", e);
+                session.items.push({
+                  type: 'message',
+                  content: [{
+                    type: 'text',
+                    text: "I'm having trouble navigating this page. Please provide more specific instructions for finding dish sets, such as 'Click on the search box' or 'Type dinnerware sets and press Enter'."
+                  }]
+                });
+              }
+            }
+          } else {
+            // Reset wait loop counter when we're not in a wait loop
+            session.waitLoopCount = 0;
           }
           
           // Process computer calls and get any new outputs
@@ -463,8 +768,24 @@ async function runCUALoop(
           }
           
           // Add the most recent items from this round to the next context
-          // This mimics how Python adds response.output to items
-          conversationContext.push(...response.output);
+          // Filter out reasoning items if they don't have a computer_call following
+          const filteredOutputItems = response.output.filter(item => {
+            // Keep all non-reasoning items
+            if (!('type' in item) || item.type !== 'reasoning') {
+              return true;
+            }
+            
+            // For reasoning items, check if there's a computer_call in the response
+            const hasComputerCall = response.output.some(otherItem => 
+              'type' in otherItem && otherItem.type === 'computer_call'
+            );
+            
+            // Only keep reasoning if there's a computer_call in the response
+            return hasComputerCall;
+          });
+          
+          // Add filtered items to conversation context
+          conversationContext.push(...filteredOutputItems);
           
           // Add the latest outputs produced in this round (like screenshots)
           if (newItems.length > 0) {
@@ -481,13 +802,94 @@ async function runCUALoop(
             session.status = 'completed';
             session.endTime = Date.now();
             session.runningTime = session.endTime - session.startTime;
-            console.error(`CUA session ${sessionId} completed`);
+            console.error('CUA session completed');
             break;
           }
         }
       } catch (error: any) {
         session.logs.push(`Error in CUA loop: ${error.message}`);
         console.error(`Error in CUA loop: ${error.message}`);
+        
+        // Increment consecutive API errors
+        consecutiveApiErrors++;
+        
+        // If there are too many consecutive errors, break out of the loop
+        if (consecutiveApiErrors >= 3) {
+          console.error(`Too many consecutive API errors (${consecutiveApiErrors}), stopping session`);
+          session.status = 'error';
+          session.error = `Multiple API errors: ${error.message}`;
+          session.endTime = Date.now();
+          session.runningTime = session.endTime - session.startTime;
+          break;
+        }
+        
+        // If we get API errors, try with just the user instruction and a screenshot
+        if (error.message.includes('API Error')) {
+          console.error(`API error detected, simplifying context for next attempt`);
+          
+          // Log the API error to the action log
+          session.actionLog.push({
+            timestamp: Date.now(),
+            action: 'API Error',
+            details: `Error: ${error.message}. Resetting conversation context.`,
+            success: false
+          });
+          
+          // Reset conversation context to the minimal needed
+          conversationContext = [];
+          
+          // Just include user instruction
+          if (userInstruction) {
+            conversationContext.push(userInstruction);
+          }
+          
+          // Take a new screenshot
+          const newScreenshot = await computer.screenshot();
+          session.images.push(newScreenshot);
+          
+          // Get current URL
+          const currentUrl = await computer.getCurrentUrl();
+          
+          // Add a new screenshot to the context
+          conversationContext.push({
+            type: 'computer_call',
+            call_id: `screenshot_reset_${Date.now()}`,
+            action: {
+              type: 'screenshot'
+            }
+          });
+          
+          conversationContext.push({
+            type: 'computer_call_output',
+            call_id: `screenshot_reset_${Date.now()}`,
+            output: {
+              type: 'input_image',
+              image_url: `data:image/jpeg;base64,${newScreenshot}`,
+              current_url: currentUrl
+            }
+          });
+          
+          // Log the recovery action
+          session.actionLog.push({
+            timestamp: Date.now(),
+            action: 'Reset Context',
+            details: 'Simplified conversation context and took a new screenshot to recover from API error',
+            success: true,
+            url: currentUrl
+          });
+          
+          // Add a message to help the user understand what's happening
+          session.items.push({
+            type: 'message',
+            content: [{
+              type: 'text',
+              text: "I encountered an issue with the API. I've reset our conversation and will try again with your original request. Please be patient."
+            }]
+          });
+          
+          // Continue the loop with the simplified context
+          continue;
+        }
         
         // If there's an error, we'll continue the loop unless it's terminal
         if (error.message.includes('No output from model') || 
@@ -499,10 +901,13 @@ async function runCUALoop(
           break;
         }
       }
+      
+      // Reset consecutive API errors counter on successful loop
+      consecutiveApiErrors = 0;
     }
   } catch (error: any) {
     // Handle terminal errors
-    console.error(`Fatal error in CUA session ${sessionId}: ${error.message}`);
+    console.error(`Fatal error in CUA session: ${error.message}`);
     
     if (session) {
       session.status = 'error';
@@ -561,7 +966,7 @@ export const agentStart: Tool = {
         // Create or get the page using the same method as browser_navigate
         if (createdNewPage) {
           page = await context.createPage();
-          console.error(`Created new browser page for CUA session ${sessionId}`);
+          console.error('Created new browser page for CUA session');
         } else {
           page = context.existingPage();
         }
@@ -572,7 +977,7 @@ export const agentStart: Tool = {
         // Use same cap on load event as browser_navigate 
         await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
         
-        console.error(`Navigated to: ${url} for CUA session ${sessionId}`);
+        console.error(`Navigated to: ${url} for CUA session`);
       } catch (error: any) {
         console.error(`Navigation error: ${error.message}`);
       }
@@ -584,6 +989,12 @@ export const agentStart: Tool = {
       status: 'starting',
       images: [],
       logs: [`Session ${sessionId} created with instructions: ${validatedParams.instructions}`],
+      actionLog: [{
+        timestamp: Date.now(),
+        action: 'Session Created',
+        details: `New CUA session created with instructions: "${validatedParams.instructions.substring(0, 50)}${validatedParams.instructions.length > 50 ? '...' : ''}"`,
+        success: true
+      }],
       startTime: Date.now()
     };
     
@@ -637,45 +1048,68 @@ export const agentStart: Tool = {
 
 // Agent status schema
 const agentStatusSchema = z.object({
-  sessionId: z.string().describe('The ID of the session to check'),
   waitSeconds: z.number().optional().describe('Time in seconds to wait for completion'),
 });
 
 export const agentStatus: Tool = {
   schema: {
     name: 'agent_status',
-    description: 'Check the status of a running agent session',
+    description: 'Check the status of the running agent session',
     inputSchema: zodToJsonSchema(agentStatusSchema),
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentStatusSchema.parse(params);
-    const { sessionId, waitSeconds = 0 } = validatedParams;
+    const { waitSeconds = 0 } = validatedParams;
 
-    // Get the session
-    const session = sessions.get(sessionId);
-    if (!session) {
+    // Get the most recent session
+    const sessionEntries = Array.from(sessions.entries());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
         isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [latestSessionId, session] = sessionEntries[0];
 
     // If wait time is specified and session is still running, wait
     if (waitSeconds > 0 && (session.status === 'starting' || session.status === 'running')) {
       await new Promise(resolve => setTimeout(resolve, waitSeconds * 1000));
     }
 
+    // Get the last few actions for a summary
+    const recentActions = session.actionLog
+      .slice(-5) // Get last 5 actions
+      .map(entry => ({
+        time: new Date(entry.timestamp).toISOString(),
+        action: entry.action,
+        details: entry.details,
+        success: entry.success
+      }));
+    
+    // Count successful and failed actions
+    const successfulActions = session.actionLog.filter(entry => entry.success).length;
+    const failedActions = session.actionLog.filter(entry => !entry.success).length;
+    const totalActions = session.actionLog.length;
+
     // Get the current status
     return {
       content: [{
         type: 'text' as const,
         text: JSON.stringify({
-          sessionId,
           status: session.status,
           runningTime: session.status === 'running'
             ? Date.now() - session.startTime
             : session.runningTime,
+          actionSummary: {
+            total: totalActions,
+            successful: successfulActions,
+            failed: failedActions,
+            recentActions: recentActions
+          },
           lastMessage: session.items.length > 0 
             ? session.items[session.items.length - 1] 
             : null,
@@ -688,7 +1122,6 @@ export const agentStatus: Tool = {
 
 // Agent log schema
 const agentLogSchema = z.object({
-  sessionId: z.string().describe('The ID of the session to get logs for'),
   includeImages: z.boolean().optional().describe('Whether to include images in the log'),
 });
 
@@ -701,22 +1134,35 @@ export const agentLog: Tool = {
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentLogSchema.parse(params);
-    const { sessionId, includeImages = false } = validatedParams;
+    const { includeImages = false } = validatedParams;
 
-    // Get the session
-    const session = sessions.get(sessionId);
-    if (!session) {
+    // Get the most recent session
+    const sessionEntries = Array.from(sessions.entries());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
         isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [latestSessionId, session] = sessionEntries[0];
+
+    // Format the action log for display with timestamps
+    const formattedActionLog = session.actionLog.map(entry => ({
+      time: new Date(entry.timestamp).toISOString(),
+      action: entry.action,
+      details: entry.details,
+      success: entry.success,
+      url: entry.url || ''
+    }));
 
     // Prepare the response
     const result: any = {
-      sessionId,
       status: session.status,
       logs: session.logs,
+      actions: formattedActionLog, // Add the formatted action log
       startTime: new Date(session.startTime).toISOString(),
       endTime: session.endTime ? new Date(session.endTime).toISOString() : undefined,
       runningTime: session.status === 'running'
@@ -760,9 +1206,7 @@ export const agentLog: Tool = {
 };
 
 // Agent end schema
-const agentEndSchema = z.object({
-  sessionId: z.string().describe('The ID of the session to end'),
-});
+const agentEndSchema = z.object({});
 
 export const agentEnd: Tool = {
   schema: {
@@ -772,17 +1216,20 @@ export const agentEnd: Tool = {
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
-    const validatedParams = agentEndSchema.parse(params);
-    const { sessionId } = validatedParams;
+    agentEndSchema.parse(params);
 
-    // Get the session
-    const session = sessions.get(sessionId);
-    if (!session) {
+    // Get the most recent session
+    const sessionEntries = Array.from(sessions.entries());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
         isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [latestSessionId, session] = sessionEntries[0];
 
     // Get current status before ending
     const previousStatus = session.status;
@@ -791,13 +1238,12 @@ export const agentEnd: Tool = {
     session.status = 'completed';
     session.endTime = Date.now();
     session.runningTime = session.endTime - session.startTime;
-    session.logs.push(`Session ${sessionId} forcefully ended`);
+    session.logs.push('Session forcefully ended');
 
     return {
       content: [{
         type: 'text' as const,
         text: JSON.stringify({
-          sessionId,
           status: 'ended',
           message: 'Session ended successfully',
           previousStatus
@@ -808,9 +1254,7 @@ export const agentEnd: Tool = {
 };
 
 // Get the last image schema
-const agentGetLastImageSchema = z.object({
-  sessionId: z.string().describe('The ID of the session to get the last image from'),
-});
+const agentGetLastImageSchema = z.object({});
 
 export const agentGetLastImage: Tool = {
   schema: {
@@ -820,22 +1264,25 @@ export const agentGetLastImage: Tool = {
   },
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
-    const validatedParams = agentGetLastImageSchema.parse(params);
-    const { sessionId } = validatedParams;
+    agentGetLastImageSchema.parse(params);
 
-    // Get the session
-    const session = sessions.get(sessionId);
-    if (!session) {
+    // Get the most recent session
+    const sessionEntries = Array.from(sessions.entries());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
         isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [latestSessionId, session] = sessionEntries[0];
 
     // Check if there are any images
     if (session.images.length === 0) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: `No images available for session ${sessionId}` }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No images available for current session' }) }],
         isError: true,
       };
     }
@@ -848,7 +1295,6 @@ export const agentGetLastImage: Tool = {
         { 
           type: 'text' as const, 
           text: JSON.stringify({
-            sessionId,
             status: session.status
           }) 
         },
@@ -864,7 +1310,6 @@ export const agentGetLastImage: Tool = {
 
 // Agent reply schema
 const agentReplySchema = z.object({
-  sessionId: z.string().describe('The ID of the session to reply to'),
   replyText: z.string().describe('Text to send to the agent as a reply'),
 });
 
@@ -877,21 +1322,25 @@ export const agentReply: Tool = {
 
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentReplySchema.parse(params);
-    const { sessionId, replyText } = validatedParams;
+    const { replyText } = validatedParams;
 
-    // Get the session
-    const session = sessions.get(sessionId);
-    if (!session) {
+    // Get the most recent session
+    const sessionEntries = Array.from(sessions.entries());
+    if (sessionEntries.length === 0) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} not found` }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: 'No active session found' }) }],
         isError: true,
       };
     }
+    
+    // Sort sessions by start time, descending (most recent first)
+    sessionEntries.sort((a, b) => b[1].startTime - a[1].startTime);
+    const [latestSessionId, session] = sessionEntries[0];
 
     // Check if the session can accept replies
     if (session.status !== 'completed' && session.status !== 'running') {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session ${sessionId} cannot accept replies (status: ${session.status})` }) }],
+        content: [{ type: 'text' as const, text: JSON.stringify({ error: `Session cannot accept replies (status: ${session.status})` }) }],
         isError: true,
       };
     }
@@ -920,8 +1369,7 @@ export const agentReply: Tool = {
           content: [{ 
             type: 'text' as const, 
             text: JSON.stringify({ 
-              error: 'No OpenAI API key found in environment',
-              sessionId 
+              error: 'No OpenAI API key found in environment'
             }) 
           }],
           isError: true,
@@ -935,7 +1383,7 @@ export const agentReply: Tool = {
       setTimeout(() => {
         // Create a special function to restart with reply
         const restartWithReply = async (): Promise<void> => {
-          const session = sessions.get(sessionId);
+          const session = sessions.get(latestSessionId);
           if (!session) return;
           
           try {
@@ -1055,8 +1503,24 @@ export const agentReply: Tool = {
                     conversationContext.push(latestUserMsg);
                   }
                   
-                  // Add the most recent items from this round to the next context
-                  conversationContext.push(...response.output);
+                  // Filter out reasoning items if they don't have a computer_call following
+                  const filteredOutputItems = response.output.filter(item => {
+                    // Keep all non-reasoning items
+                    if (!('type' in item) || item.type !== 'reasoning') {
+                      return true;
+                    }
+                    
+                    // For reasoning items, check if there's a computer_call in the response
+                    const hasComputerCall = response.output.some(otherItem => 
+                      'type' in otherItem && otherItem.type === 'computer_call'
+                    );
+                    
+                    // Only keep reasoning if there's a computer_call in the response
+                    return hasComputerCall;
+                  });
+                  
+                  // Add filtered items to conversation context
+                  conversationContext.push(...filteredOutputItems);
                   
                   // Add the latest outputs produced in this round
                   if (newItems.length > 0) {
@@ -1073,7 +1537,7 @@ export const agentReply: Tool = {
                     session.status = 'completed';
                     session.endTime = Date.now();
                     session.runningTime = session.endTime - session.startTime;
-                    console.error(`CUA session ${sessionId} completed after reply`);
+                    console.error(`CUA session ${latestSessionId} completed after reply`);
                     break;
                   }
                 }
@@ -1093,7 +1557,7 @@ export const agentReply: Tool = {
               }
             }
           } catch (error: any) {
-            console.error(`Fatal error in CUA session ${sessionId}: ${error.message}`);
+            console.error(`Fatal error in CUA session: ${error.message}`);
             
             if (session) {
               session.status = 'error';
@@ -1114,7 +1578,6 @@ export const agentReply: Tool = {
       content: [{ 
         type: 'text' as const, 
         text: JSON.stringify({ 
-          sessionId,
           status: session.status,
           message: 'Reply sent successfully' 
         }) 

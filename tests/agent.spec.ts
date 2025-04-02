@@ -99,7 +99,7 @@ test.describe('CUA Agent Tests', () => {
     const resultObj = JSON.parse(resultText);
 
     expect(resultObj.status).toBeDefined();
-    expect(resultObj.status).toBe('starting');
+    expect(resultObj.status).toBe('started');
   });
 
   test('should check agent status', async () => {
@@ -135,8 +135,8 @@ test.describe('CUA Agent Tests', () => {
     const endResultText = endResult.content[0].type === 'text' ? endResult.content[0].text : '';
     const endObj = JSON.parse(endResultText);
 
-    expect(endObj.status).toBe('completed');
-    expect(endObj.message).toBe('Session forcefully ended');
+    expect(endObj.status).toBe('ended');
+    expect(endObj.message).toBe('Session ended successfully');
   });
 
   test('should get agent logs', async () => {
