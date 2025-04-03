@@ -16,12 +16,18 @@
 
 import { fork } from 'child_process';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
 
 import * as playwright from 'playwright';
 import yaml from 'yaml';
 
+// Define internal browser name type to include our custom browsers
+type BrowserName = 'chromium' | 'firefox' | 'webkit' | 'brave' | 'msedge';
+
+// But expose only what Playwright actually supports
 export type ContextOptions = {
-  browserName?: 'chromium' | 'firefox' | 'webkit';
+  browserName?: BrowserName;
   userDataDir: string;
   launchOptions?: playwright.LaunchOptions;
   cdpEndpoint?: string;
@@ -75,7 +81,15 @@ export class Context {
   }
 
   async install(): Promise<string> {
-    const channel = this._options.launchOptions?.channel ?? this._options.browserName ?? 'chrome';
+    let channel = this._options.launchOptions?.channel ?? this._options.browserName ?? 'chrome';
+    
+    // For Brave browser, we need to use chromium since Playwright doesn't support Brave directly
+    if (channel === 'brave') {
+      channel = 'chromium';
+    }
+    
+    // msedge is directly supported by Playwright's installer
+    
     const cli = path.join(require.resolve('playwright/package.json'), '..', 'cli.js');
     const child = fork(cli, ['install', channel], {
       stdio: 'pipe',
@@ -127,11 +141,47 @@ export class Context {
   private async _createPage(): Promise<{ browser?: playwright.Browser, page: playwright.Page }> {
     if (this._options.remoteEndpoint) {
       const url = new URL(this._options.remoteEndpoint);
-      if (this._options.browserName)
-        url.searchParams.set('browser', this._options.browserName);
-      if (this._options.launchOptions)
-        url.searchParams.set('launch-options', JSON.stringify(this._options.launchOptions));
-      const browser = await playwright[this._options.browserName ?? 'chromium'].connect(String(url));
+      
+      // Map our browser names to ones Playwright can use
+      let browserToUse: 'chromium' | 'firefox' | 'webkit' = 'chromium';
+      
+      // Map browser names to Playwright-supported ones
+      if (this._options.browserName) {
+        if (this._options.browserName === 'firefox' || this._options.browserName === 'webkit') {
+          browserToUse = this._options.browserName;
+        } else if (this._options.browserName === 'brave' || this._options.browserName === 'msedge') {
+          // Both Brave and Edge are Chromium-based
+          browserToUse = 'chromium';
+        }
+      }
+      
+      url.searchParams.set('browser', browserToUse);
+      
+      let launchOptions = this._options.launchOptions ? {...this._options.launchOptions} : {};
+      
+      // If we're using Brave, set the executablePath
+      if (this._options.browserName === 'brave') {
+        const platform = process.platform;
+        
+        if (platform === 'darwin') {
+          // macOS
+          const arm64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+          const x64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+          launchOptions.executablePath = fs.existsSync(arm64Path) ? arm64Path : x64Path;
+        } else if (platform === 'win32') {
+          // Windows
+          launchOptions.executablePath = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
+        } else if (platform === 'linux') {
+          // Linux
+          launchOptions.executablePath = '/usr/bin/brave-browser';
+        }
+      }
+      
+      if (Object.keys(launchOptions).length > 0) {
+        url.searchParams.set('launch-options', JSON.stringify(launchOptions));
+      }
+      
+      const browser = await playwright[browserToUse].connect(String(url));
       const page = await browser.newPage();
       return { browser, page };
     }
@@ -152,43 +202,167 @@ export class Context {
 
   private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
     try {
-      const browserType = this._options.browserName ? playwright[this._options.browserName] : playwright.chromium;
+      // Map to Playwright-supported browser types
+      let browserToUse: 'chromium' | 'firefox' | 'webkit' = 'chromium';
+      
+      if (this._options.browserName) {
+        if (this._options.browserName === 'firefox' || this._options.browserName === 'webkit') {
+          browserToUse = this._options.browserName;
+        }
+        // Both Brave and Edge use Chromium underneath
+      }
+      
+      // Get the appropriate Playwright browser type
+      const browserType = playwright[browserToUse];
 
-      // Set additional options for better reliability with persistent contexts
+      // Determine the profile directory to use
+      let userDataDir = this._options.userDataDir;
+      
+      // For Brave, we'll use a special approach - let Brave manage its own profile
+      if (this._options.browserName === 'brave') {
+        // Create an empty directory for Playwright's requirements, but Brave will ignore it
+        // and use its own default profile directory
+        const tempDir = path.join(os.tmpdir(), `brave-empty-profile-${Date.now()}`);
+        fs.mkdirSync(tempDir, { recursive: true });
+        userDataDir = tempDir;
+        console.error(`For Brave: Using placeholder directory ${tempDir}, but Brave will use its default profile`);
+      } else {
+        // For other browsers, set up a specific profile with permissions
+        userDataDir = this._options.userDataDir.endsWith('-profile') 
+          ? this._options.userDataDir.replace('-profile', `-${this._options.browserName || 'chrome'}-allowed-profile`) 
+          : `${this._options.userDataDir}-allowed`;
+          
+        // Make sure this directory exists
+        if (!fs.existsSync(userDataDir)) {
+          fs.mkdirSync(userDataDir, { recursive: true });
+        }
+      }
+      
+      // Set browser-specific executable paths if needed
+      let executablePath = this._options.launchOptions?.executablePath;
+      if (this._options.browserName === 'brave') {
+        // Default Brave paths based on platform
+        const platform = process.platform;
+        if (platform === 'darwin') {
+          // macOS
+          const arm64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+          const x64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+          executablePath = fs.existsSync(arm64Path) ? arm64Path : x64Path;
+        } else if (platform === 'win32') {
+          // Windows
+          executablePath = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
+        } else if (platform === 'linux') {
+          // Linux
+          executablePath = '/usr/bin/brave-browser';
+        }
+      }
+      // msedge is handled automatically by Playwright
+      
       const launchOptions = {
         ...this._options.launchOptions,
+        executablePath,
+        // Completely ignore all default args to have full control
+        ignoreDefaultArgs: true,
         args: [
           ...(this._options.launchOptions?.args || []),
-          '--enable-extensions',
-          '--no-sandbox',
-          // Completely disable background networking
-          '--disable-background-networking',
-          // Disable various background services
+          // Add back only the default arguments that are safe and necessary
+          '--disable-field-trial-config',
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
-          // Disable component updates to prevent background processes
-          '--disable-component-update',
-          // Disable feature that could cause conflicts
-          '--disable-features=TranslateUI',
-          // Disable first-run dialogs, welcome pages, etc.
+          '--disable-breakpad',
+          '--disable-client-side-phishing-detection',
+          '--no-default-browser-check',
+          '--disable-default-apps',
+          '--disable-dev-shm-usage',
+          '--allow-pre-commit-input',
+          '--disable-hang-monitor',
+          '--disable-ipc-flooding-protection',
+          '--disable-popup-blocking',
+          '--disable-prompt-on-repost',
+          '--disable-renderer-backgrounding',
+          '--force-color-profile=srgb',
+          '--metrics-recording-only',
           '--no-first-run',
+          '--password-store=basic',
+          '--use-mock-keychain',
+          '--no-service-autorun',
+          '--export-tagged-pdf',
+          '--disable-search-engine-choice-screen',
+          '--unsafely-disable-devtools-self-xss-warnings',
+          
+          // Extensions-specific flags
+          '--enable-extensions',
+          '--no-sandbox',
+          // This flag helps with Chrome extension installation
+          '--enable-automation=false',
+          // Completely disable extension restrictions
+          '--disable-extensions-http-throttling',
+          // Disable extension security features that might prevent installation
+          '--disable-extensions-file-access-check',
+          // Allow external extensions installation
+          '--enable-easy-off-store-extension-install',
+          // Additional flags for extension support
+          '--allow-outdated-plugins',
+          // Disable extension security policies
+          '--disable-extension-security-policy',
+          // Add service worker bypass to help with login
+          '--enable-features=ServiceWorkerBypassFetchHandler',
         ],
         handleSIGINT: true,  // Ensure browser process is properly cleaned up on SIGINT
         handleSIGTERM: true, // Ensure browser process is properly cleaned up on SIGTERM
         handleSIGHUP: true,  // Ensure browser process is properly cleaned up on SIGHUP
       };
 
-      // Playwright automatically adds the --user-data-dir argument,
-      // so we filter out any user-data-dir flags if they exist to prevent duplicates
-      if (launchOptions.args) {
+      // Handle custom flags for Brave
+      const isBrave = (launchOptions as any).isBrave === true || this._options.browserName === 'brave';
+      
+      // Special handling for Brave - we want minimal arguments
+      if (isBrave) {
+        console.error('Using Brave-specific launch configuration - minimal arguments');
+        
+        // For Brave, we'll use ignoreAllDefaultArgs: true (already set above)
+        // and provide only the minimal set of args needed
+        
+        // Filter out any problematic args that might interfere with extensions
+        if (launchOptions.args) {
+          launchOptions.args = launchOptions.args.filter(arg => 
+            !arg.startsWith('--disable-extensions') &&
+            !arg.startsWith('--disable-component-extensions-with-background-pages')
+          );
+          
+          // Make sure --enable-extensions is included
+          if (!launchOptions.args.includes('--enable-extensions')) {
+            launchOptions.args.push('--enable-extensions');
+          }
+        }
+        
+        // Clean up the launchOptions to avoid confusing Playwright
+        if ((launchOptions as any).isBrave) {
+          delete (launchOptions as any).isBrave;
+        }
+        
+        console.error('Final Brave launch options:');
+        console.error('ignoreDefaultArgs:', launchOptions.ignoreDefaultArgs);
+        console.error('args:', launchOptions.args);
+      } else if (launchOptions.args) {
+        // For non-Brave browsers, filter out any user-data-dir flags as Playwright adds them
         launchOptions.args = launchOptions.args.filter(arg =>
           !arg.startsWith('--user-data-dir=') &&
           !arg.startsWith('--user-data-dir-name=')
         );
       }
 
-      // Launch the browser with persistent context
-      return await browserType.launchPersistentContext(this._options.userDataDir, launchOptions);
+      // Debug info - show what we're about to launch
+      console.error('----------------------------------------');
+      console.error('Launching browser with these parameters:');
+      console.error(`Browser type: ${browserToUse}`);
+      console.error(`Browser actual: ${this._options.browserName}`);
+      console.error(`User data dir: ${userDataDir}`);
+      console.error('Launch options:', JSON.stringify(launchOptions, null, 2));
+      console.error('----------------------------------------');
+      
+      // Launch the browser with persistent context - use our custom user data dir
+      return await browserType.launchPersistentContext(userDataDir, launchOptions);
     } catch (error: any) {
       if (error.message.includes('Executable doesn\'t exist'))
         throw new Error(`Browser specified in your config is not installed. Either install it (likely) or change the config.`);

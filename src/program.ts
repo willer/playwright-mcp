@@ -35,7 +35,7 @@ const packageJSON = require('../package.json');
 program
     .version('Version ' + packageJSON.version)
     .name(packageJSON.name)
-    .option('--browser <browser>', 'Browser or chrome channel to use, possible values: chrome, firefox, webkit, msedge.')
+    .option('--browser <browser>', 'Browser or chrome channel to use, possible values: chrome, firefox, webkit, msedge, brave.')
     .option('--cdp-endpoint <endpoint>', 'CDP endpoint to connect to.')
     .option('--executable-path <path>', 'Path to the browser executable.')
     .option('--headless', 'Run browser in headless mode, headed by default')
@@ -43,8 +43,12 @@ program
     .option('--user-data-dir <path>', 'Path to the user data directory')
     .option('--vision', 'Run server that uses screenshots (Aria snapshots are used by default)')
     .action(async options => {
-      let browserName: 'chromium' | 'firefox' | 'webkit';
+      // Include our custom browser types even though they will be mapped to standard ones
+      let browserName: 'chromium' | 'firefox' | 'webkit' | 'brave' | 'msedge';
       let channel: string | undefined;
+      let executablePath = options.executablePath;
+      let useBraveDirectly = false; // Flag to indicate we're using Brave directly
+      
       switch (options.browser) {
         case 'chrome':
         case 'chrome-beta':
@@ -56,6 +60,28 @@ program
         case 'msedge-dev':
           browserName = 'chromium';
           channel = options.browser;
+          break;
+        case 'brave':
+          browserName = 'chromium'; // Set to a type that Playwright knows
+          useBraveDirectly = true;  // Flag that we're launching Brave directly
+          
+          // Set Brave executable path if not specified
+          if (!executablePath) {
+            const platform = process.platform;
+            if (platform === 'darwin') {
+              // macOS
+              const arm64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+              const x64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
+              executablePath = fs.existsSync(arm64Path) ? arm64Path : x64Path;
+              console.error(`Using Brave executable: ${executablePath}`);
+            } else if (platform === 'win32') {
+              // Windows
+              executablePath = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
+            } else if (platform === 'linux') {
+              // Linux
+              executablePath = '/usr/bin/brave-browser';
+            }
+          }
           break;
         case 'chromium':
           browserName = 'chromium';
@@ -72,16 +98,106 @@ program
           channel = undefined;
       }
 
+      // Set up browser-specific arguments
+      const args = [];
+      
+      // We'll use ignoreAllDefaultArgs: true and add back only what we need
+      if (options.browser === 'msedge') {
+        args.push(
+          '--enable-extensions',
+          '--disable-extensions-file-access-check',
+          '--allow-outdated-plugins',
+          '--disable-extension-http-throttling',
+          '--disable-features=ExtensionsToolbarMenu', // Try to ensure extensions menu is not disabled
+          '--enable-easy-off-store-extension-install'
+        );
+      } else if (options.browser === 'brave') {
+        // For Brave, we want minimal arguments, just enough to ensure extensions work
+        args.push(
+          '--enable-extensions',
+          '--no-sandbox',
+          '--enable-automation=false',
+          '--no-first-run'
+        );
+      } else {
+        // For other browsers, use a standard set of arguments
+        args.push(
+          '--enable-extensions',
+          '--no-sandbox',
+          '--no-first-run'
+        );
+      }
+      
       const launchOptions: LaunchOptions = {
         headless: !!options.headless,
         channel,
-        executablePath: options.executablePath,
-        args: ['--enable-extensions'],
+        executablePath,
+        ignoreDefaultArgs: true, // Take full control of the launch arguments
+        args,
       };
 
-      // Use a consistent user data directory for persistent sessions
-      const userDataDir = options.userDataDir ?? await createUserDataDir(browserName);
+      // For Brave, use the system user profile instead of creating a temporary one
+      let userDataDir;
+      if (options.browser === 'brave') {
+        const platform = process.platform;
+        if (platform === 'darwin') {
+          // macOS - Use the default Brave profile
+          userDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser', 'Default');
+          
+          // Check if the path exists and look for alternative paths if it doesn't
+          if (!fs.existsSync(userDataDir)) {
+            console.error(`Default Brave profile not found at: ${userDataDir}`);
+            const parentDir = path.join(os.homedir(), 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser');
+            if (fs.existsSync(parentDir)) {
+              try {
+                const profiles = fs.readdirSync(parentDir, { withFileTypes: true })
+                  .filter(dirent => dirent.isDirectory())
+                  .map(dirent => dirent.name);
+                
+                console.error(`Found these potential Brave profiles: ${profiles.join(', ')}`);
+                
+                // Try to find a profile named Default or Profile
+                const defaultProfile = profiles.find(name => name === 'Default' || name.startsWith('Profile'));
+                if (defaultProfile) {
+                  userDataDir = path.join(parentDir, defaultProfile);
+                  console.error(`Using alternate Brave profile: ${userDataDir}`);
+                } else if (profiles.length > 0) {
+                  // Use any profile we can find
+                  userDataDir = path.join(parentDir, profiles[0]);
+                  console.error(`Using first available Brave profile: ${userDataDir}`);
+                }
+              } catch (e) {
+                console.error(`Error examining Brave profiles: ${e}`);
+              }
+            } else {
+              console.error(`Brave parent directory not found: ${parentDir}`);
+              // Force use of the parent User Data directory
+              userDataDir = path.join(os.homedir(), 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser');
+            }
+          }
+        } else if (platform === 'win32') {
+          // Windows
+          userDataDir = path.join(os.homedir(), 'AppData', 'Local', 'BraveSoftware', 'Brave-Browser', 'User Data');
+        } else if (platform === 'linux') {
+          // Linux
+          userDataDir = path.join(os.homedir(), '.config', 'BraveSoftware', 'Brave-Browser');
+        } else {
+          // Fallback to a temporary directory
+          userDataDir = await createUserDataDir(browserName);
+        }
+        console.error(`NOT using explicit user data directory for Brave - letting it use default`);
+      } else {
+        // For other browsers, use the specified or temporary user data directory
+        userDataDir = options.userDataDir ?? await createUserDataDir(browserName);
+      }
 
+      // Pass additional information as we create the server
+      if (useBraveDirectly) {
+        // Add a special attribute to indicate we're using Brave
+        (launchOptions as any).isBrave = true;
+        console.error('Using Brave-specific launch options');
+      }
+      
       const serverList = new ServerList(() => createServer({
         browserName,
         userDataDir,
@@ -165,7 +281,7 @@ function setupExitWatchdog(serverList: ServerList) {
 
 program.parse(process.argv);
 
-async function createUserDataDir(browserName: 'chromium' | 'firefox' | 'webkit') {
+async function createUserDataDir(browserName: string) {
   let cacheDirectory: string;
   if (process.platform === 'linux')
     cacheDirectory = process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
