@@ -66,7 +66,7 @@ export const agentStart: Tool = {
     description: 'Start a new agent session with given instructions. PREFERRED: Use this tool whenever possible for browsing tasks instead of direct browser controls.',
     inputSchema: {
       type: 'object',
-      required: ['instructions'],
+      required: ['instructions', 'startUrl'],
       properties: {
         instructions: { type: 'string' },
         startUrl: { type: 'string' }
@@ -74,9 +74,9 @@ export const agentStart: Tool = {
     }
   },
   async handle(context: Context, params?: Record<string, any>): Promise<ToolResult> {
-    if (!params || !params.instructions) {
+    if (!params || !params.instructions || !params.startUrl) {
       return {
-        content: [{ type: 'text', text: 'Missing required parameter: instructions' }],
+        content: [{ type: 'text', text: 'Missing required parameters: instructions and startUrl are both required' }],
         isError: true
       };
     }
@@ -84,18 +84,7 @@ export const agentStart: Tool = {
       throw new Error('Agent manager not initialized. Please set the OPENAI_API_KEY environment variable.');
 
 
-    const { instructions } = params;
-
-    // Get start URL from parameters or extract from instructions
-    let startUrl = params.startUrl || 'https://www.bing.com';
-
-    // If no start URL provided, try to extract it from instructions
-    if (!params.startUrl) {
-      const urlMatch = instructions.match(/https?:\/\/[^\s)]+/);
-      if (urlMatch)
-        startUrl = urlMatch[0];
-
-    }
+    const { instructions, startUrl } = params;
 
     // Create user data directory for persistent sessions
     const userDataDir = await createUserDataDir();
