@@ -116,7 +116,7 @@ program
         args.push(
           '--enable-extensions',
           '--no-sandbox',
-          '--enable-automation=false',
+          '--enable-automation',
           '--no-first-run'
         );
       } else {
@@ -132,7 +132,7 @@ program
         headless: !!options.headless,
         channel,
         executablePath,
-        ignoreDefaultArgs: true, // Take full control of the launch arguments
+        ignoreDefaultArgs: true, // Explicitly control all arguments
         args,
       };
 

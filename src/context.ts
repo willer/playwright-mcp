@@ -261,7 +261,7 @@ export class Context {
       const launchOptions = {
         ...this._options.launchOptions,
         executablePath,
-        // Completely ignore all default args to have full control
+        // Control all arguments explicitly
         ignoreDefaultArgs: true,
         args: [
           ...(this._options.launchOptions?.args || []),
@@ -293,8 +293,8 @@ export class Context {
           // Extensions-specific flags
           '--enable-extensions',
           '--no-sandbox',
-          // This flag helps with Chrome extension installation
-          '--enable-automation=false',
+          // This flag helps with Chrome automation
+          '--enable-automation',
           // Completely disable extension restrictions
           '--disable-extensions-http-throttling',
           // Disable extension security features that might prevent installation
@@ -307,6 +307,8 @@ export class Context {
           '--disable-extension-security-policy',
           // Add service worker bypass to help with login
           '--enable-features=ServiceWorkerBypassFetchHandler',
+          // Essential for Playwright to communicate with the browser
+          '--remote-debugging-pipe',
         ],
         handleSIGINT: true,  // Ensure browser process is properly cleaned up on SIGINT
         handleSIGTERM: true, // Ensure browser process is properly cleaned up on SIGTERM
