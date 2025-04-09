@@ -23,7 +23,7 @@
     "prepare": "hooks/install.sh",
     "claudecheck": "node utils/claudecheck.js",
     "npm-publish": "npm run clean && npm run build && npm run test && npm publish",
-    "inspect": "npm run build && CLIENT_PORT=8006 SERVER_PORT=9006 npx @modelcontextprotocol/inspector node cli.js"
+    "inspect": "node utils/run-inspector.js"
   },
   "exports": {
     "./package.json": "./package.json",
