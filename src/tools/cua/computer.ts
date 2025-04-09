@@ -39,7 +39,7 @@ export class PlaywrightComputer {
   async getPage(): Promise<playwright.Page> {
     // Always use the existing page - if there's no existing page,
     // something is wrong with the session setup
-    return this.context.existingPage();
+    return this.context.currentTab().page;
   }
 
   /**

@@ -985,6 +985,7 @@ const agentStartSchema = z.object({
 
 // Agent implementation
 export const agentStart: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_start',
     description: 'Start a new agent session with given instructions. PREFERRED: Use this tool whenever possible for browsing tasks instead of direct browser controls.',
@@ -994,19 +995,18 @@ export const agentStart: Tool = {
   handle: async (context: Context, params?: Record<string, any>): Promise<ToolResult> => {
     const validatedParams = agentStartSchema.parse(params);
     
-    // Check if we need to create a browser page
-    // Using the same approach as browser_navigate for consistency
-    let page;
-    let createdNewPage = false;
+    // Check if we need to navigate to a URL
+    let tab;
     
     try {
-      // Try to get existing page 
-      page = context.existingPage();
+      // Try to get existing tab
+      tab = context.currentTab();
     } catch (e) {
-      // No page exists, create one exactly like browser_navigate does
-      createdNewPage = true;
+      // No tab exists, create a new tab
+      tab = await context.newTab();
+      console.error('Created new browser tab for CUA session');
       
-      // If we created a new page and no startUrl was provided, set a default
+      // If no startUrl was provided, set a default
       if (!validatedParams.startUrl) {
         validatedParams.startUrl = 'https://www.google.com';
       }
@@ -1015,25 +1015,15 @@ export const agentStart: Tool = {
     // Create a new session
     const sessionId = generateSessionId();
     
-    // If startUrl is provided or we need to create a new page, we'll navigate
-    if (validatedParams.startUrl || createdNewPage) {
+    // If startUrl is provided, navigate to it
+    if (validatedParams.startUrl) {
       // Ensure URL has a protocol using our shared utility function
-      const url = normalizeUrl(validatedParams.startUrl || 'https://www.google.com');
+      const url = normalizeUrl(validatedParams.startUrl);
       
       try {
-        // Create or get the page using the same method as browser_navigate
-        if (createdNewPage) {
-          page = await context.createPage();
-          console.error('Created new browser page for CUA session');
-        } else {
-          page = context.existingPage();
-        }
-        
-        // Use the same waitUntil option as browser_navigate
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
-        
-        // Use same cap on load event as browser_navigate 
-        await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+        // Navigate to the URL
+        await tab.navigate(url);
+        console.error(`Navigated to: ${url} for CUA session`);
         
         console.error(`Navigated to: ${url} for CUA session`);
       } catch (error: any) {
@@ -1110,6 +1100,7 @@ const agentStatusSchema = z.object({
 });
 
 export const agentStatus: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_status',
     description: 'Check the status of the running agent session. Waits for 5 seconds by default to allow the agent to complete its current action before reporting status. Use to check if the agent has finished processing or needs more input.',
@@ -1196,6 +1187,7 @@ const agentLogSchema = z.object({
 });
 
 export const agentLog: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_log',
     description: 'Get a summary log of an agent session. Returns minimal data by default to conserve tokens: only 2 recent messages, 5 log entries, and 3 actions. Customize with maxMessages, maxLogs, and maxActions parameters. Does NOT include screenshots by default.',
@@ -1319,6 +1311,7 @@ export const agentLog: Tool = {
 const agentEndSchema = z.object({});
 
 export const agentEnd: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_end',
     description: 'Forcefully end an agent session',
@@ -1367,6 +1360,7 @@ export const agentEnd: Tool = {
 const agentGetLastImageSchema = z.object({});
 
 export const agentGetLastImage: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_get_last_image',
     description: 'EXPENSIVE: Get the last screenshot from an agent session. Uses many tokens due to image size. Only use when explicitly requested by user.',
@@ -1424,6 +1418,7 @@ const agentReplySchema = z.object({
 });
 
 export const agentReply: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_reply',
     description: 'Send a reply to a running agent session to continue the conversation',

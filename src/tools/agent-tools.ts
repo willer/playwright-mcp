@@ -61,6 +61,7 @@ async function getOrCreateStorageState(userDataDir: string): Promise<any> {
  * Start a new agent session
  */
 export const agentStart: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_start',
     description: 'Start a new agent session with given instructions. PREFERRED: Use this tool whenever possible for browsing tasks instead of direct browser controls.',
@@ -121,6 +122,7 @@ export const agentStart: Tool = {
  * Check the status of a running agent session
  */
 export const agentStatus: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_status',
     description: 'Check the status of a running agent session',
@@ -202,6 +204,7 @@ export const agentStatus: Tool = {
  * Get the complete log of an agent session
  */
 export const agentLog: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_log',
     description: 'Get the complete log of an agent session',
@@ -255,6 +258,7 @@ export const agentLog: Tool = {
  * Forcefully end an agent session
  */
 export const agentEnd: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_end',
     description: 'Forcefully end an agent session',
@@ -307,6 +311,7 @@ export const agentEnd: Tool = {
  * Get the last screenshot from an agent session
  */
 export const agentGetLastImage: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_get_last_image',
     description: 'Get the last screenshot from an agent session',
@@ -360,6 +365,7 @@ export const agentGetLastImage: Tool = {
  * Send a reply to continue a conversation
  */
 export const agentReply: Tool = {
+  capability: 'core',
   schema: {
     name: 'agent_reply',
     description: 'Send a reply to a running agent session to continue the conversation',
