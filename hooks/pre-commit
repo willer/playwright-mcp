@@ -1,0 +1,18 @@
+#!/bin/sh
+
+# Simple pre-commit hook for Playwright MCP
+echo "Running pre-commit checks..."
+
+# Run lint-staged to check staged files
+echo "Running lint-staged..."
+npx lint-staged
+
+# Run build to check TypeScript
+echo "Running TypeScript build..."
+npm run build || exit 1
+
+# Run AI linter
+echo "Running AI linter..."
+npm run claudecheck || exit 1
+
+echo "Pre-commit checks passed! ✅"

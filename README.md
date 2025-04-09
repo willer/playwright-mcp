@@ -65,20 +65,21 @@ After installation, the Playwright MCP server will be available for use with you
 
 #### Pre-commit Hooks
 
-This project uses pre-commit hooks to ensure code quality before committing changes. The hooks run the following checks:
+This project uses simple pre-commit hooks to ensure code quality before committing. The hook runs these checks:
 
-1. **Linting**: Runs ESLint on all staged files
-2. **TypeScript Build**: Ensures the project builds successfully
-3. **Build Verification**: Ensures the TypeScript code builds properly
-4. **AI Linting**: Uses the custom Claude AI linter to check for common issues like large functions and console.log usage
+1. **Linting**: Runs ESLint on staged files and fixes issues when possible
+2. **Build Check**: Verifies the TypeScript code builds properly
+3. **AI Linting**: Uses Claude AI linter to check for issues like console.log usage and large functions
 
-If any of these checks fail, your commit will be rejected. Fix the issues and try committing again.
+To install the hooks manually (automatically done on npm install):
+```bash
+./hooks/install.sh
+```
 
-You can run these checks manually:
+You can run the checks manually with:
 ```bash
 npm run lint       # Run ESLint
-npm run build      # Build the TypeScript code
-npm run test       # Run tests
+npm run build      # Build TypeScript
 npm run claudecheck # Run AI linter
 ```
 
