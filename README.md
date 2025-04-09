@@ -69,8 +69,8 @@ This project uses pre-commit hooks to ensure code quality before committing chan
 
 1. **Linting**: Runs ESLint on all staged files
 2. **TypeScript Build**: Ensures the project builds successfully
-3. **Unit Tests**: Runs critical unit tests
-4. **AI Linting**: Uses the custom Claude AI linter to check for common issues
+3. **Build Verification**: Ensures the TypeScript code builds properly
+4. **AI Linting**: Uses the custom Claude AI linter to check for common issues like large functions and console.log usage
 
 If any of these checks fail, your commit will be rejected. Fix the issues and try committing again.
 
