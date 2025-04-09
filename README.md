@@ -71,9 +71,9 @@ To install the git hook that checks code before committing:
 ```
 
 The hook runs basic quality checks:
-- Linting staged files
+- Linting staged files (with auto-fix where possible)
 - Verifying the build works
-- Running a simple AI linter for common issues
+- Running a simple AI linter for common issues like console.log usage
 
 These same checks can be run manually with:
 ```bash
