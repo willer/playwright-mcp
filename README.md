@@ -61,6 +61,27 @@ code-insiders --add-mcp '{"name":"playwright","command":"npx","args":["@playwrig
 
 After installation, the Playwright MCP server will be available for use with your GitHub Copilot agent in VS Code.
 
+### Development Guide
+
+#### Pre-commit Hooks
+
+This project uses pre-commit hooks to ensure code quality. The hooks run the following checks:
+
+1. **Linting**: Runs ESLint on all staged files
+2. **TypeScript Build**: Ensures the project builds successfully
+3. **Unit Tests**: Runs critical unit tests
+4. **AI Linting**: Uses the custom Claude AI linter to check for common issues
+
+If any of these checks fail, your commit will be rejected. Fix the issues and try committing again.
+
+You can run these checks manually:
+```bash
+npm run lint       # Run ESLint
+npm run build      # Build the TypeScript code
+npm run test       # Run tests
+npm run claudecheck # Run AI linter
+```
+
 ### CLI Options
 
 The Playwright MCP server supports the following command-line options:

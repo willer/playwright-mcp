@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "Running pre-commit checks..."
+npx lint-staged
+
+# Run additional checks that aren't file-specific
+echo "Running build verification..."
+# We skip full tests as they're too slow for pre-commit
+npm run build || exit 1
+
+echo "Running Claude AI linter..."
+npm run claudecheck || exit 1
+
+echo "Pre-commit checks passed! ✅"
