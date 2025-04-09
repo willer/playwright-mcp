@@ -45,7 +45,7 @@ const urlForWebsites = `vscode:mcp/install?${encodeURIComponent(config)}`;
 const urlForGithub = `https://insiders.vscode.dev/redirect?url=${encodeURIComponent(urlForWebsites)}`;
 -->
 
-[<img alt="Install in VS Code Insiders" src="https://img.shields.io/badge/VS_Code_Insiders-VS_Code_Insiders?style=flat-square&label=Install%20Server&color=24bfa5">](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522playwright%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540playwright%252Fmcp%2540latest%2522%255D%257D)
+[<img src="https://img.shields.io/badge/VS_Code-VS_Code?style=flat-square&label=Install%20Server&color=0098FF" alt="Install in VS Code">](https://insiders.vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522playwright%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540playwright%252Fmcp%2540latest%2522%255D%257D)  [<img alt="Install in VS Code Insiders" src="https://img.shields.io/badge/VS_Code_Insiders-VS_Code_Insiders?style=flat-square&label=Install%20Server&color=24bfa5">](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522playwright%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522%2540playwright%252Fmcp%2540latest%2522%255D%257D)
 
 Alternatively, you can install the Playwright MCP server using the VS Code CLI:
 
@@ -70,6 +70,7 @@ The Playwright MCP server supports the following command-line options:
   - Chrome channels: `chrome-beta`, `chrome-canary`, `chrome-dev`
   - Edge channels: `msedge-beta`, `msedge-canary`, `msedge-dev`
   - Default: `chrome`
+- `--caps <caps>`: Comma-separated list of capabilities to enable, possible values: tabs, pdf, history, wait, files, install. Default is all.
 - `--cdp-endpoint <endpoint>`: CDP endpoint to connect to
 - `--executable-path <path>`: Path to the browser executable
 - `--headless`: Run browser in headless mode (headed by default)
@@ -173,22 +174,7 @@ transport = new SSEServerTransport("/messages", res);
 server.connect(transport);
 ```
 
-### Snapshot Mode
-
-The Playwright MCP provides a set of tools for browser automation. Here are all available tools:
-
-- **browser_navigate**
-  - Description: Navigate to a URL
-  - Parameters:
-    - `url` (string): The URL to navigate to
-
-- **browser_go_back**
-  - Description: Go back to the previous page
-  - Parameters: None
-
-- **browser_go_forward**
-  - Description: Go forward to the next page
-  - Parameters: None
+### Snapshot-based Interactions
 
 - **browser_click**
   - Description: Perform click on a web page
@@ -216,108 +202,120 @@ The Playwright MCP provides a set of tools for browser automation. Here are all 
     - `element` (string): Human-readable element description used to obtain permission to interact with the element
     - `ref` (string): Exact target element reference from the page snapshot
     - `text` (string): Text to type into the element
-    - `submit` (boolean): Whether to submit entered text (press Enter after)
+    - `submit` (boolean, optional): Whether to submit entered text (press Enter after)
+    - `slowly` (boolean, optional): Whether to type one character at a time. Useful for triggering key handlers in the page. By default entire text is filled in at once.
 
 - **browser_select_option**
-  - Description: Select option in a dropdown
+  - Description: Select an option in a dropdown
   - Parameters:
     - `element` (string): Human-readable element description used to obtain permission to interact with the element
     - `ref` (string): Exact target element reference from the page snapshot
-    - `values` (array): Array of values to select in the dropdown.
+    - `values` (array): Array of values to select in the dropdown. This can be a single value or multiple values.
 
-- **browser_choose_file**
-  - Description: Choose one or multiple files to upload
+- **browser_snapshot**
+  - Description: Capture accessibility snapshot of the current page, this is better than screenshot
+  - Parameters: None
+
+- **browser_take_screenshot**
+  - Description: Take a screenshot of the current page. You can't perform actions based on the screenshot, use browser_snapshot for actions.
   - Parameters:
-    - `paths` (array): The absolute paths to the files to upload. Can be a single file or multiple files.
+    - `raw` (boolean, optional): Whether to return without compression (in PNG format). Default is false, which returns a JPEG image.
+
+### Vision-based Interactions
+
+- **browser_screen_move_mouse**
+  - Description: Move mouse to a given position
+  - Parameters:
+    - `element` (string): Human-readable element description used to obtain permission to interact with the element
+    - `x` (number): X coordinate
+    - `y` (number): Y coordinate
+
+- **browser_screen_capture**
+  - Description: Take a screenshot of the current page
+  - Parameters: None
+
+- **browser_screen_click**
+  - Description: Click left mouse button
+  - Parameters:
+    - `element` (string): Human-readable element description used to obtain permission to interact with the element
+    - `x` (number): X coordinate
+    - `y` (number): Y coordinate
+
+- **browser_screen_drag**
+  - Description: Drag left mouse button
+  - Parameters:
+    - `element` (string): Human-readable element description used to obtain permission to interact with the element
+    - `startX` (number): Start X coordinate
+    - `startY` (number): Start Y coordinate
+    - `endX` (number): End X coordinate
+    - `endY` (number): End Y coordinate
+
+- **browser_screen_type**
+  - Description: Type text
+  - Parameters:
+    - `text` (string): Text to type
+    - `submit` (boolean, optional): Whether to submit entered text (press Enter after)
 
 - **browser_press_key**
   - Description: Press a key on the keyboard
   - Parameters:
     - `key` (string): Name of the key to press or a character to generate, such as `ArrowLeft` or `a`
 
-- **browser_snapshot**
-  - Description: Capture accessibility snapshot of the current page (better than screenshot)
+### Tab Management
+
+- **browser_tab_list**
+  - Description: List browser tabs
   - Parameters: None
 
-- **browser_save_as_pdf**
-  - Description: Save page as PDF
-  - Parameters: None
-
-- **browser_take_screenshot**
-  - Description: Capture screenshot of the page
+- **browser_tab_new**
+  - Description: Open a new tab
   - Parameters:
-    - `raw` (string): Optionally returns lossless PNG screenshot. JPEG by default.
+    - `url` (string, optional): The URL to navigate to in the new tab. If not provided, the new tab will be blank.
 
-- **browser_wait**
-  - Description: Wait for a specified time in seconds
+- **browser_tab_select**
+  - Description: Select a tab by index
   - Parameters:
-    - `time` (number): The time to wait in seconds (capped at 10 seconds)
+    - `index` (number): The index of the tab to select
 
-- **browser_close**
-  - Description: Close the page
-  - Parameters: None
+- **browser_tab_close**
+  - Description: Close a tab
+  - Parameters:
+    - `index` (number, optional): The index of the tab to close. Closes current tab if not provided.
 
-
-### Vision Mode
-
-Vision Mode provides tools for visual-based interactions using screenshots. Here are all available tools:
+### Navigation
 
 - **browser_navigate**
   - Description: Navigate to a URL
   - Parameters:
     - `url` (string): The URL to navigate to
 
-- **browser_go_back**
+- **browser_navigate_back**
   - Description: Go back to the previous page
   - Parameters: None
 
-- **browser_go_forward**
+- **browser_navigate_forward**
   - Description: Go forward to the next page
   - Parameters: None
 
-- **browser_screenshot**
-  - Description: Capture screenshot of the current page
-  - Parameters: None
-
-- **browser_move_mouse**
-  - Description: Move mouse to specified coordinates
-  - Parameters:
-    - `x` (number): X coordinate
-    - `y` (number): Y coordinate
-
-- **browser_click**
-  - Description: Click at specified coordinates
-  - Parameters:
-    - `x` (number): X coordinate to click at
-    - `y` (number): Y coordinate to click at
-
-- **browser_drag**
-  - Description: Perform drag and drop operation
-  - Parameters:
-    - `startX` (number): Start X coordinate
-    - `startY` (number): Start Y coordinate
-    - `endX` (number): End X coordinate
-    - `endY` (number): End Y coordinate
-
-- **browser_type**
-  - Description: Type text at specified coordinates
-  - Parameters:
-    - `text` (string): Text to type
-    - `submit` (boolean): Whether to submit entered text (press Enter after)
+### Keyboard
 
 - **browser_press_key**
   - Description: Press a key on the keyboard
   - Parameters:
     - `key` (string): Name of the key to press or a character to generate, such as `ArrowLeft` or `a`
 
-- **browser_choose_file**
+### Files and Media
+
+- **browser_file_upload**
   - Description: Choose one or multiple files to upload
   - Parameters:
     - `paths` (array): The absolute paths to the files to upload. Can be a single file or multiple files.
 
-- **browser_save_as_pdf**
+- **browser_pdf_save**
   - Description: Save page as PDF
   - Parameters: None
+
+### Utilities
 
 - **browser_wait**
   - Description: Wait for a specified time in seconds
@@ -368,3 +366,9 @@ To use CUA mode, you need to set your OpenAI API key in the `.env` file (see `.e
   - Parameters:
     - `sessionId` (string, required): Session ID returned from agent_start
     - `replyText` (string, required): The reply to send to the agent
+
+### Installation
+
+- **browser_install**
+  - Description: Install the browser specified in the config. Call this if you get an error about the browser not being installed.
+  - Parameters: None

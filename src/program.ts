@@ -29,6 +29,7 @@ import { ServerList } from './server';
 
 import type { LaunchOptions } from 'playwright';
 import assert from 'assert';
+import { ToolCapability } from './tools/tool';
 
 const packageJSON = require('../package.json');
 
@@ -36,6 +37,7 @@ program
     .version('Version ' + packageJSON.version)
     .name(packageJSON.name)
     .option('--browser <browser>', 'Browser or chrome channel to use, possible values: chrome, firefox, webkit, msedge, brave.')
+    .option('--caps <caps>', 'Comma-separated list of capabilities to enable, possible values: tabs, pdf, history, wait, files, install. Default is all.')
     .option('--cdp-endpoint <endpoint>', 'CDP endpoint to connect to.')
     .option('--executable-path <path>', 'Path to the browser executable.')
     .option('--headless', 'Run browser in headless mode, headed by default')
@@ -204,6 +206,7 @@ program
         launchOptions,
         vision: !!options.vision,
         cdpEndpoint: options.cdpEndpoint,
+        capabilities: options.caps?.split(',').map((c: string) => c.trim() as ToolCapability),
       }));
       setupExitWatchdog(serverList);
 
@@ -237,7 +240,7 @@ function setupExitWatchdog(serverList: ServerList) {
     const forceExitTimeout = setTimeout(() => {
       console.error('Forced exit after timeout');
       process.exit(exitCode);
-    }, 5000);
+    }, 15000); // Increased from 5000 to 15000 to match upstream
 
     try {
       // Try to close all servers gracefully

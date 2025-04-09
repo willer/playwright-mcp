@@ -17,20 +17,19 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-import { runAndWait } from './utils';
-
 import type { Tool } from './tool';
 
-export const screenshot: Tool = {
+const screenshot: Tool = {
+  capability: 'core',
   schema: {
-    name: 'browser_screenshot',
+    name: 'browser_screen_capture',
     description: 'Take a screenshot of the current page. EXPENSIVE: Use only when verifying layouts or as a last resort when other approaches fail. Costs many tokens due to image size.',
     inputSchema: zodToJsonSchema(z.object({})),
   },
 
   handle: async context => {
-    const page = context.existingPage();
-    const screenshot = await page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
+    const tab = context.currentTab();
+    const screenshot = await tab.page.screenshot({ type: 'jpeg', quality: 50, scale: 'css' });
     return {
       content: [{ type: 'image', data: screenshot.toString('base64'), mimeType: 'image/jpeg' }],
     };
@@ -46,17 +45,18 @@ const moveMouseSchema = elementSchema.extend({
   y: z.number().describe('Y coordinate'),
 });
 
-export const moveMouse: Tool = {
+const moveMouse: Tool = {
+  capability: 'core',
   schema: {
-    name: 'browser_move_mouse',
+    name: 'browser_screen_move_mouse',
     description: 'Move mouse to a given position',
     inputSchema: zodToJsonSchema(moveMouseSchema),
   },
 
   handle: async (context, params) => {
     const validatedParams = moveMouseSchema.parse(params);
-    const page = context.existingPage();
-    await page.mouse.move(validatedParams.x, validatedParams.y);
+    const tab = context.currentTab();
+    await tab.page.mouse.move(validatedParams.x, validatedParams.y);
     return {
       content: [{ type: 'text', text: `Moved mouse to (${validatedParams.x}, ${validatedParams.y})` }],
     };
@@ -68,19 +68,22 @@ const clickSchema = elementSchema.extend({
   y: z.number().describe('Y coordinate'),
 });
 
-export const click: Tool = {
+const click: Tool = {
+  capability: 'core',
   schema: {
-    name: 'browser_click',
+    name: 'browser_screen_click',
     description: 'Click left mouse button',
     inputSchema: zodToJsonSchema(clickSchema),
   },
 
   handle: async (context, params) => {
-    return await runAndWait(context, 'Clicked mouse', async page => {
+    return await context.currentTab().runAndWait(async tab => {
       const validatedParams = clickSchema.parse(params);
-      await page.mouse.move(validatedParams.x, validatedParams.y);
-      await page.mouse.down();
-      await page.mouse.up();
+      await tab.page.mouse.move(validatedParams.x, validatedParams.y);
+      await tab.page.mouse.down();
+      await tab.page.mouse.up();
+    }, {
+      status: 'Clicked mouse',
     });
   },
 };
@@ -92,42 +95,56 @@ const dragSchema = elementSchema.extend({
   endY: z.number().describe('End Y coordinate'),
 });
 
-export const drag: Tool = {
+const drag: Tool = {
+  capability: 'core',
   schema: {
-    name: 'browser_drag',
+    name: 'browser_screen_drag',
     description: 'Drag left mouse button',
     inputSchema: zodToJsonSchema(dragSchema),
   },
 
   handle: async (context, params) => {
     const validatedParams = dragSchema.parse(params);
-    return await runAndWait(context, `Dragged mouse from (${validatedParams.startX}, ${validatedParams.startY}) to (${validatedParams.endX}, ${validatedParams.endY})`, async page => {
-      await page.mouse.move(validatedParams.startX, validatedParams.startY);
-      await page.mouse.down();
-      await page.mouse.move(validatedParams.endX, validatedParams.endY);
-      await page.mouse.up();
+    return await context.currentTab().runAndWait(async tab => {
+      await tab.page.mouse.move(validatedParams.startX, validatedParams.startY);
+      await tab.page.mouse.down();
+      await tab.page.mouse.move(validatedParams.endX, validatedParams.endY);
+      await tab.page.mouse.up();
+    }, {
+      status: `Dragged mouse from (${validatedParams.startX}, ${validatedParams.startY}) to (${validatedParams.endX}, ${validatedParams.endY})`,
     });
   },
 };
 
 const typeSchema = z.object({
   text: z.string().describe('Text to type into the element'),
-  submit: z.boolean().describe('Whether to submit entered text (press Enter after)'),
+  submit: z.boolean().optional().describe('Whether to submit entered text (press Enter after)'),
 });
 
-export const type: Tool = {
+const type: Tool = {
+  capability: 'core',
   schema: {
-    name: 'browser_type',
+    name: 'browser_screen_type',
     description: 'Type text',
     inputSchema: zodToJsonSchema(typeSchema),
   },
 
   handle: async (context, params) => {
     const validatedParams = typeSchema.parse(params);
-    return await runAndWait(context, `Typed text "${validatedParams.text}"`, async page => {
-      await page.keyboard.type(validatedParams.text);
+    return await context.currentTab().runAndWait(async tab => {
+      await tab.page.keyboard.type(validatedParams.text);
       if (validatedParams.submit)
-        await page.keyboard.press('Enter');
+        await tab.page.keyboard.press('Enter');
+    }, {
+      status: `Typed text "${validatedParams.text}"`,
     });
   },
 };
+
+export default [
+  screenshot,
+  moveMouse,
+  click,
+  drag,
+  type,
+];

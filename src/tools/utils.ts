@@ -15,10 +15,8 @@
  */
 
 import type * as playwright from 'playwright';
-import type { ToolResult } from './tool';
-import type { Context } from '../context';
 
-async function waitForCompletion<R>(page: playwright.Page, callback: () => Promise<R>): Promise<R> {
+export async function waitForCompletion<R>(page: playwright.Page, callback: () => Promise<R>): Promise<R> {
   const requests = new Set<playwright.Request>();
   let frameNavigated = false;
   let waitCallback: () => void = () => {};
@@ -69,96 +67,6 @@ async function waitForCompletion<R>(page: playwright.Page, callback: () => Promi
   } finally {
     dispose();
   }
-}
-
-export async function runAndWait(context: Context, status: string, callback: (page: playwright.Page) => Promise<any>, snapshot: boolean = false, compact: boolean = false): Promise<ToolResult> {
-  const page = context.existingPage();
-  const dismissFileChooser = context.hasFileChooser();
-  
-  try {
-    await waitForCompletion(page, () => callback(page));
-    if (dismissFileChooser)
-      context.clearFileChooser();
-    
-    // Success case
-    const result: ToolResult = snapshot ? await captureAriaSnapshot(context, status, compact) : {
-      content: [{ type: 'text', text: status }],
-    };
-    return result;
-  } catch (error: any) {
-    // Error case - provide meaningful error message
-    console.error(`Error executing action: ${error}`);
-    
-    // Return a formatted error response
-    return {
-      content: [{ 
-        type: 'text', 
-        text: `Action failed: ${status}\nError: ${error.message || String(error)}\n\nTip: You may need to take a new snapshot with browser_snapshot before trying again.`
-      }],
-      isError: true
-    };
-  }
-}
-
-export async function captureAriaSnapshot(
-  context: Context, 
-  status: string = '', 
-  compact: boolean = false,
-  truncate: boolean = true,
-  truncateLength: number = 5000
-): Promise<ToolResult> {
-  const page = context.existingPage();
-  const lines = [];
-  if (status)
-    lines.push(`${status}`);
-  lines.push(
-      '',
-      `- Page URL: ${page.url()}`,
-      `- Page Title: ${await page.title()}`
-  );
-  if (context.hasFileChooser())
-    lines.push(`- There is a file chooser visible that requires browser_choose_file to be called`);
-  
-  let snapshotContent = '';
-  
-  if (compact) {
-    // In compact mode, we'll only include the essential interactive elements
-    lines.push(
-      `- Mode: Compact (showing only interactive elements)`,
-      `- For complete page details, use browser_snapshot with compact=false`,
-      '```yaml'
-    );
-    snapshotContent = await context.compactSnapshot();
-  } else {
-    // Normal detailed snapshot
-    lines.push(
-      `- Mode: Standard page details`,
-      '```yaml'
-    );
-    snapshotContent = await context.allFramesSnapshot();
-  }
-  
-  // Handle truncation if needed
-  if (truncate && snapshotContent.length > truncateLength) {
-    snapshotContent = snapshotContent.substring(0, truncateLength);
-    snapshotContent += `\n\n# ... Content truncated to ${truncateLength} characters ...`;
-    snapshotContent += `\n# Use browser_snapshot with truncate=false for full content, or compact=true to focus on interactive elements.`;
-  }
-  
-  lines.push(snapshotContent, '```', '');
-  
-  // Add truncation status display
-  if (truncate) {
-    lines.push(`Note: Truncation is enabled. ${
-      snapshotContent.length >= truncateLength ? 
-      `Content was truncated to ${truncateLength} characters.` : 
-      `Content was under the ${truncateLength} character limit and was not truncated.`
-    }`);
-  }
-  
-  return {
-    content: [{ type: 'text', text: lines.join('\n') }],
-  };
 }
 
 export function sanitizeForFilePath(s: string) {

@@ -14,23 +14,38 @@
  * limitations under the License.
  */
 
+import os from 'os';
+import path from 'path';
+
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
+import { sanitizeForFilePath } from './utils';
+
 import type { Tool } from './tool';
 
-export const console: Tool = {
-  schema: {
-    name: 'browser_console',
-    description: 'View the page console messages',
-    inputSchema: zodToJsonSchema(z.object({})),
-  },
+const pdfSchema = z.object({});
 
+const pdf: Tool = {
+  capability: 'pdf',
+  schema: {
+    name: 'browser_pdf_save',
+    description: 'Save page as PDF',
+    inputSchema: zodToJsonSchema(pdfSchema),
+  },
   handle: async context => {
-    const messages = await context.currentTab().console();
-    const log = messages.map(message => `[${message.type().toUpperCase()}] ${message.text()}`).join('\n');
+    const tab = context.currentTab();
+    const fileName = path.join(os.tmpdir(), sanitizeForFilePath(`page-${new Date().toISOString()}`)) + '.pdf';
+    await tab.page.pdf({ path: fileName });
     return {
-      content: [{ type: 'text', text: log }],
+      content: [{
+        type: 'text',
+        text: `Saved as ${fileName}`,
+      }],
     };
   },
 };
+
+export default [
+  pdf,
+];

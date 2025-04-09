@@ -22,6 +22,9 @@ import os from 'os';
 import * as playwright from 'playwright';
 import yaml from 'yaml';
 
+import { waitForCompletion } from './tools/utils';
+import { ToolResult } from './tools/tool';
+
 // Define internal browser name type to include our custom browsers
 type BrowserName = 'chromium' | 'firefox' | 'webkit' | 'brave' | 'msedge';
 
@@ -34,54 +37,181 @@ export type ContextOptions = {
   remoteEndpoint?: string;
 };
 
+type PageOrFrameLocator = playwright.Page | playwright.FrameLocator;
+
+type RunOptions = {
+  captureSnapshot?: boolean;
+  waitForCompletion?: boolean;
+  status?: string;
+  noClearFileChooser?: boolean;
+};
+
 export class Context {
-  private _options: ContextOptions;
+  readonly options: ContextOptions;
   private _browser: playwright.Browser | undefined;
-  private _page: playwright.Page | undefined;
-  private _console: playwright.ConsoleMessage[] = [];
-  private _createPagePromise: Promise<playwright.Page> | undefined;
-  private _fileChooser: playwright.FileChooser | undefined;
-  private _lastSnapshotFrames: (playwright.Page | playwright.FrameLocator)[] = [];
+  private _browserContext: playwright.BrowserContext | undefined;
+  private _tabs: Tab[] = [];
+  private _currentTab: Tab | undefined;
 
   constructor(options: ContextOptions) {
-    this._options = options;
+    this.options = options;
   }
 
-  async createPage(): Promise<playwright.Page> {
-    if (this._createPagePromise)
-      return this._createPagePromise;
-    this._createPagePromise = (async () => {
-      const { browser, page } = await this._createPage();
-      page.on('console', event => this._console.push(event));
-      page.on('framenavigated', frame => {
-        if (!frame.parentFrame())
-          this._console.length = 0;
-      });
-      page.on('close', () => this._onPageClose());
-      page.on('filechooser', chooser => this._fileChooser = chooser);
-      page.setDefaultNavigationTimeout(60000);
-      page.setDefaultTimeout(5000);
-      this._page = page;
-      this._browser = browser;
-      return page;
-    })();
-    return this._createPagePromise;
+  tabs(): Tab[] {
+    return this._tabs;
   }
 
-  private _onPageClose() {
+  currentTab(): Tab {
+    if (!this._currentTab)
+      throw new Error('Navigate to a location to create a tab');
+    return this._currentTab;
+  }
+
+  async newTab(): Promise<Tab> {
+    const browserContext = await this._ensureBrowserContext();
+    const page = await browserContext.newPage();
+    this._currentTab = this._tabs.find(t => t.page === page)!;
+    return this._currentTab;
+  }
+
+  async selectTab(index: number) {
+    this._currentTab = this._tabs[index - 1];
+    await this._currentTab.page.bringToFront();
+  }
+
+  async ensureTab(): Promise<Tab> {
+    const context = await this._ensureBrowserContext();
+    if (!this._currentTab)
+      await context.newPage();
+    return this._currentTab!;
+  }
+
+  async listTabs(): Promise<string> {
+    if (!this._tabs.length)
+      return 'No tabs open';
+    const lines: string[] = ['Open tabs:'];
+    for (let i = 0; i < this._tabs.length; i++) {
+      const tab = this._tabs[i];
+      const title = await tab.page.title();
+      const url = tab.page.url();
+      const current = tab === this._currentTab ? ' (current)' : '';
+      lines.push(`- ${i + 1}:${current} [${title}] (${url})`);
+    }
+    return lines.join('\n');
+  }
+
+  async closeTab(index: number | undefined) {
+    const tab = index === undefined ? this.currentTab() : this._tabs[index - 1];
+    await tab.page.close();
+    return await this.listTabs();
+  }
+
+  private _onPageCreated(page: playwright.Page) {
+    const tab = new Tab(this, page, tab => this._onPageClosed(tab));
+    this._tabs.push(tab);
+    if (!this._currentTab)
+      this._currentTab = tab;
+  }
+
+  private _onPageClosed(tab: Tab) {
+    const index = this._tabs.indexOf(tab);
+    if (index === -1)
+      return;
+    this._tabs.splice(index, 1);
+
+    if (this._currentTab === tab)
+      this._currentTab = this._tabs[Math.min(index, this._tabs.length - 1)];
     const browser = this._browser;
-    const page = this._page;
-    void page?.context()?.close().then(() => browser?.close()).catch(() => {});
+    if (this._browserContext && !this._tabs.length) {
+      void this._browserContext.close().then(() => browser?.close()).catch(() => {});
+      this._browser = undefined;
+      this._browserContext = undefined;
+    }
+  }
 
-    this._createPagePromise = undefined;
-    this._browser = undefined;
-    this._page = undefined;
+  async close() {
+    if (!this._browserContext)
+      return;
+    await this._browserContext.close();
+  }
+
+  private async _ensureBrowserContext() {
+    if (!this._browserContext) {
+      const context = await this._createBrowserContext();
+      this._browser = context.browser;
+      this._browserContext = context.browserContext;
+      for (const page of this._browserContext.pages())
+        this._onPageCreated(page);
+      this._browserContext.on('page', page => this._onPageCreated(page));
+    }
+    return this._browserContext;
+  }
+
+  private async _createBrowserContext(): Promise<{ browser?: playwright.Browser, browserContext: playwright.BrowserContext }> {
+    if (this.options.remoteEndpoint) {
+      const url = new URL(this.options.remoteEndpoint);
+      if (this.options.browserName)
+        url.searchParams.set('browser', this.options.browserName);
+      if (this.options.launchOptions)
+        url.searchParams.set('launch-options', JSON.stringify(this.options.launchOptions));
+      const browser = await playwright[this.options.browserName ?? 'chromium'].connect(String(url));
+      const browserContext = await browser.newContext();
+      return { browser, browserContext };
+    }
+
+    if (this.options.cdpEndpoint) {
+      const browser = await playwright.chromium.connectOverCDP(this.options.cdpEndpoint);
+      const browserContext = browser.contexts()[0];
+      return { browser, browserContext };
+    }
+
+    const browserContext = await this._launchPersistentContext();
+    return { browserContext };
+  }
+
+  private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
+    try {
+      const browserType = this.options.browserName ? playwright[this.options.browserName] : playwright.chromium;
+      return await browserType.launchPersistentContext(this.options.userDataDir, this.options.launchOptions);
+    } catch (error: any) {
+      if (error.message.includes('Executable doesn\'t exist'))
+        throw new Error(`Browser specified in your config is not installed. Either install it (likely) or change the config.`);
+      throw error;
+    }
+  }
+}
+
+class Tab {
+  readonly context: Context;
+  readonly page: playwright.Page;
+  private _console: playwright.ConsoleMessage[] = [];
+  private _fileChooser: playwright.FileChooser | undefined;
+  private _snapshot: PageSnapshot | undefined;
+  private _onPageClose: (tab: Tab) => void;
+
+  constructor(context: Context, page: playwright.Page, onPageClose: (tab: Tab) => void) {
+    this.context = context;
+    this.page = page;
+    this._onPageClose = onPageClose;
+    page.on('console', event => this._console.push(event));
+    page.on('framenavigated', frame => {
+      if (!frame.parentFrame())
+        this._console.length = 0;
+    });
+    page.on('close', () => this._onClose());
+    page.on('filechooser', chooser => this._fileChooser = chooser);
+    page.setDefaultNavigationTimeout(60000);
+    page.setDefaultTimeout(5000);
+  }
+
+  private _onClose() {
     this._fileChooser = undefined;
     this._console.length = 0;
+    this._onPageClose(this);
   }
 
   async install(): Promise<string> {
-    let channel = this._options.launchOptions?.channel ?? this._options.browserName ?? 'chrome';
+    let channel = this.context.options.launchOptions?.channel ?? this.context.options.browserName ?? 'chrome';
     
     // For Brave browser, we need to use chromium since Playwright doesn't support Brave directly
     if (channel === 'brave') {
@@ -107,20 +237,57 @@ export class Context {
     });
   }
 
-  existingPage(): playwright.Page {
-    if (!this._page)
-      throw new Error('Navigate to a location to create a page');
-    return this._page;
+  async navigate(url: string) {
+    await this.page.goto(url, { waitUntil: 'domcontentloaded' });
+    // Cap load event to 5 seconds, the page is operational at this point.
+    await this.page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
+  }
+
+  async run(callback: (tab: Tab) => Promise<void>, options?: RunOptions): Promise<ToolResult> {
+    try {
+      if (!options?.noClearFileChooser)
+        this._fileChooser = undefined;
+      if (options?.waitForCompletion)
+        await waitForCompletion(this.page, () => callback(this));
+      else
+        await callback(this);
+    } finally {
+      if (options?.captureSnapshot)
+        this._snapshot = await PageSnapshot.create(this.page);
+    }
+    const tabList = this.context.tabs().length > 1 ? await this.context.listTabs() + '\n\nCurrent tab:' + '\n' : '';
+    const snapshot = this._snapshot?.text({ status: options?.status, hasFileChooser: !!this._fileChooser }) ?? options?.status ?? '';
+    return {
+      content: [{
+        type: 'text',
+        text: tabList + snapshot,
+      }],
+    };
+  }
+
+  async runAndWait(callback: (tab: Tab) => Promise<void>, options?: RunOptions): Promise<ToolResult> {
+    return await this.run(callback, {
+      waitForCompletion: true,
+      ...options,
+    });
+  }
+
+  async runAndWaitWithSnapshot(callback: (tab: Tab) => Promise<void>, options?: RunOptions): Promise<ToolResult> {
+    return await this.run(callback, {
+      captureSnapshot: true,
+      waitForCompletion: true,
+      ...options,
+    });
+  }
+
+  lastSnapshot(): PageSnapshot {
+    if (!this._snapshot)
+      throw new Error('No snapshot available');
+    return this._snapshot;
   }
 
   async console(): Promise<playwright.ConsoleMessage[]> {
     return this._console;
-  }
-
-  async close() {
-    if (!this._page)
-      return;
-    await this._page.close();
   }
 
   async submitFileChooser(paths: string[]) {
@@ -129,263 +296,54 @@ export class Context {
     await this._fileChooser.setFiles(paths);
     this._fileChooser = undefined;
   }
+}
 
-  hasFileChooser() {
-    return !!this._fileChooser;
+class PageSnapshot {
+  private _frameLocators: PageOrFrameLocator[] = [];
+  private _text!: string;
+
+  constructor() {
   }
 
-  clearFileChooser() {
-    this._fileChooser = undefined;
+  static async create(page: playwright.Page): Promise<PageSnapshot> {
+    const snapshot = new PageSnapshot();
+    await snapshot._build(page);
+    return snapshot;
   }
 
-  private async _createPage(): Promise<{ browser?: playwright.Browser, page: playwright.Page }> {
-    if (this._options.remoteEndpoint) {
-      const url = new URL(this._options.remoteEndpoint);
-      
-      // Map our browser names to ones Playwright can use
-      let browserToUse: 'chromium' | 'firefox' | 'webkit' = 'chromium';
-      
-      // Map browser names to Playwright-supported ones
-      if (this._options.browserName) {
-        if (this._options.browserName === 'firefox' || this._options.browserName === 'webkit') {
-          browserToUse = this._options.browserName;
-        } else if (this._options.browserName === 'brave' || this._options.browserName === 'msedge') {
-          // Both Brave and Edge are Chromium-based
-          browserToUse = 'chromium';
-        }
-      }
-      
-      url.searchParams.set('browser', browserToUse);
-      
-      let launchOptions = this._options.launchOptions ? {...this._options.launchOptions} : {};
-      
-      // If we're using Brave, set the executablePath
-      if (this._options.browserName === 'brave') {
-        const platform = process.platform;
-        
-        if (platform === 'darwin') {
-          // macOS
-          const arm64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
-          const x64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
-          launchOptions.executablePath = fs.existsSync(arm64Path) ? arm64Path : x64Path;
-        } else if (platform === 'win32') {
-          // Windows
-          launchOptions.executablePath = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
-        } else if (platform === 'linux') {
-          // Linux
-          launchOptions.executablePath = '/usr/bin/brave-browser';
-        }
-      }
-      
-      if (Object.keys(launchOptions).length > 0) {
-        url.searchParams.set('launch-options', JSON.stringify(launchOptions));
-      }
-      
-      const browser = await playwright[browserToUse].connect(String(url));
-      const page = await browser.newPage();
-      return { browser, page };
+  text(options?: { status?: string, hasFileChooser?: boolean }): string {
+    const results: string[] = [];
+    if (options?.status) {
+      results.push(options.status);
+      results.push('');
     }
-
-    if (this._options.cdpEndpoint) {
-      const browser = await playwright.chromium.connectOverCDP(this._options.cdpEndpoint);
-      const browserContext = browser.contexts()[0];
-      let [page] = browserContext.pages();
-      if (!page)
-        page = await browserContext.newPage();
-      return { browser, page };
+    if (options?.hasFileChooser) {
+      results.push('- There is a file chooser visible that requires browser_file_upload to be called');
+      results.push('');
     }
-
-    const context = await this._launchPersistentContext();
-    const [page] = context.pages();
-    return { page };
+    results.push(this._text);
+    return results.join('\n');
   }
 
-  private async _launchPersistentContext(): Promise<playwright.BrowserContext> {
-    try {
-      // Map to Playwright-supported browser types
-      let browserToUse: 'chromium' | 'firefox' | 'webkit' = 'chromium';
-      
-      if (this._options.browserName) {
-        if (this._options.browserName === 'firefox' || this._options.browserName === 'webkit') {
-          browserToUse = this._options.browserName;
-        }
-        // Both Brave and Edge use Chromium underneath
-      }
-      
-      // Get the appropriate Playwright browser type
-      const browserType = playwright[browserToUse];
-
-      // Determine the profile directory to use
-      let userDataDir = this._options.userDataDir;
-      
-      // For Brave, we'll use a special approach - let Brave manage its own profile
-      if (this._options.browserName === 'brave') {
-        // Create an empty directory for Playwright's requirements, but Brave will ignore it
-        // and use its own default profile directory
-        const tempDir = path.join(os.tmpdir(), `brave-empty-profile-${Date.now()}`);
-        fs.mkdirSync(tempDir, { recursive: true });
-        userDataDir = tempDir;
-        console.error(`For Brave: Using placeholder directory ${tempDir}, but Brave will use its default profile`);
-      } else {
-        // For other browsers, set up a specific profile with permissions
-        userDataDir = this._options.userDataDir.endsWith('-profile') 
-          ? this._options.userDataDir.replace('-profile', `-${this._options.browserName || 'chrome'}-allowed-profile`) 
-          : `${this._options.userDataDir}-allowed`;
-          
-        // Make sure this directory exists
-        if (!fs.existsSync(userDataDir)) {
-          fs.mkdirSync(userDataDir, { recursive: true });
-        }
-      }
-      
-      // Set browser-specific executable paths if needed
-      let executablePath = this._options.launchOptions?.executablePath;
-      if (this._options.browserName === 'brave') {
-        // Default Brave paths based on platform
-        const platform = process.platform;
-        if (platform === 'darwin') {
-          // macOS
-          const arm64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
-          const x64Path = '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser';
-          executablePath = fs.existsSync(arm64Path) ? arm64Path : x64Path;
-        } else if (platform === 'win32') {
-          // Windows
-          executablePath = 'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe';
-        } else if (platform === 'linux') {
-          // Linux
-          executablePath = '/usr/bin/brave-browser';
-        }
-      }
-      // msedge is handled automatically by Playwright
-      
-      const launchOptions = {
-        ...this._options.launchOptions,
-        executablePath,
-        // Control all arguments explicitly
-        ignoreDefaultArgs: true,
-        args: [
-          ...(this._options.launchOptions?.args || []),
-          // Add back only the default arguments that are safe and necessary
-          '--disable-field-trial-config',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-breakpad',
-          '--disable-client-side-phishing-detection',
-          '--no-default-browser-check',
-          '--disable-default-apps',
-          '--disable-dev-shm-usage',
-          '--allow-pre-commit-input',
-          '--disable-hang-monitor',
-          '--disable-ipc-flooding-protection',
-          '--disable-popup-blocking',
-          '--disable-prompt-on-repost',
-          '--disable-renderer-backgrounding',
-          '--force-color-profile=srgb',
-          '--metrics-recording-only',
-          '--no-first-run',
-          '--password-store=basic',
-          '--use-mock-keychain',
-          '--no-service-autorun',
-          '--export-tagged-pdf',
-          '--disable-search-engine-choice-screen',
-          '--unsafely-disable-devtools-self-xss-warnings',
-          
-          // Extensions-specific flags
-          '--enable-extensions',
-          '--no-sandbox',
-          // This flag helps with Chrome automation
-          '--enable-automation',
-          // Completely disable extension restrictions
-          '--disable-extensions-http-throttling',
-          // Disable extension security features that might prevent installation
-          '--disable-extensions-file-access-check',
-          // Allow external extensions installation
-          '--enable-easy-off-store-extension-install',
-          // Additional flags for extension support
-          '--allow-outdated-plugins',
-          // Disable extension security policies
-          '--disable-extension-security-policy',
-          // Add service worker bypass to help with login
-          '--enable-features=ServiceWorkerBypassFetchHandler',
-          // Essential for Playwright to communicate with the browser
-          '--remote-debugging-pipe',
-        ],
-        handleSIGINT: true,  // Ensure browser process is properly cleaned up on SIGINT
-        handleSIGTERM: true, // Ensure browser process is properly cleaned up on SIGTERM
-        handleSIGHUP: true,  // Ensure browser process is properly cleaned up on SIGHUP
-      };
-
-      // Handle custom flags for Brave
-      const isBrave = (launchOptions as any).isBrave === true || this._options.browserName === 'brave';
-      
-      // Special handling for Brave - we want minimal arguments
-      if (isBrave) {
-        console.error('Using Brave-specific launch configuration - minimal arguments');
-        
-        // For Brave, we'll use ignoreAllDefaultArgs: true (already set above)
-        // and provide only the minimal set of args needed
-        
-        // Filter out any problematic args that might interfere with extensions
-        if (launchOptions.args) {
-          launchOptions.args = launchOptions.args.filter(arg => 
-            !arg.startsWith('--disable-extensions') &&
-            !arg.startsWith('--disable-component-extensions-with-background-pages')
-          );
-          
-          // Make sure --enable-extensions is included
-          if (!launchOptions.args.includes('--enable-extensions')) {
-            launchOptions.args.push('--enable-extensions');
-          }
-        }
-        
-        // Clean up the launchOptions to avoid confusing Playwright
-        if ((launchOptions as any).isBrave) {
-          delete (launchOptions as any).isBrave;
-        }
-        
-        console.error('Final Brave launch options:');
-        console.error('ignoreDefaultArgs:', launchOptions.ignoreDefaultArgs);
-        console.error('args:', launchOptions.args);
-      } else if (launchOptions.args) {
-        // For non-Brave browsers, filter out any user-data-dir flags as Playwright adds them
-        launchOptions.args = launchOptions.args.filter(arg =>
-          !arg.startsWith('--user-data-dir=') &&
-          !arg.startsWith('--user-data-dir-name=')
-        );
-      }
-
-      // Debug info - show what we're about to launch
-      console.error('----------------------------------------');
-      console.error('Launching browser with these parameters:');
-      console.error(`Browser type: ${browserToUse}`);
-      console.error(`Browser actual: ${this._options.browserName}`);
-      console.error(`User data dir: ${userDataDir}`);
-      console.error('Launch options:', JSON.stringify(launchOptions, null, 2));
-      console.error('----------------------------------------');
-      
-      // Launch the browser with persistent context - use our custom user data dir
-      return await browserType.launchPersistentContext(userDataDir, launchOptions);
-    } catch (error: any) {
-      if (error.message.includes('Executable doesn\'t exist'))
-        throw new Error(`Browser specified in your config is not installed. Either install it (likely) or change the config.`);
-      if (error.message.includes('Target page, context or browser has been closed')) {
-        console.error('Persistent context issue detected. This may be due to a stale browser process.');
-        console.error('Error details:', error.message);
-        throw new Error('Browser launch failed. Try removing the profile directory at: ' + this._options.userDataDir);
-      }
-      console.error('Failed to launch browser:', error);
-      throw error;
-    }
+  private async _build(page: playwright.Page) {
+    const yamlDocument = await this._snapshotFrame(page);
+    const lines = [];
+    lines.push(
+        `- Page URL: ${page.url()}`,
+        `- Page Title: ${await page.title()}`
+    );
+    lines.push(
+        `- Page Snapshot`,
+        '```yaml',
+        yamlDocument.toString().trim(),
+        '```',
+        ''
+    );
+    this._text = lines.join('\n');
   }
 
-  async allFramesSnapshot() {
-    this._lastSnapshotFrames = [];
-    const yaml = await this._allFramesSnapshot(this.existingPage());
-    return yaml.toString().trim();
-  }
-
-  private async _allFramesSnapshot(frame: playwright.Page | playwright.FrameLocator): Promise<yaml.Document> {
-    const frameIndex = this._lastSnapshotFrames.push(frame) - 1;
+  private async _snapshotFrame(frame: playwright.Page | playwright.FrameLocator) {
+    const frameIndex = this._frameLocators.push(frame) - 1;
     const snapshotString = await frame.locator('body').ariaSnapshot({ ref: true });
     const snapshot = yaml.parseDocument(snapshotString);
 
@@ -406,7 +364,7 @@ export class Context {
             const ref = value.match(/\[ref=(.*)\]/)?.[1];
             if (ref) {
               try {
-                const childSnapshot = await this._allFramesSnapshot(frame.frameLocator(`aria-ref=${ref}`));
+                const childSnapshot = await this._snapshotFrame(frame.frameLocator(`aria-ref=${ref}`));
                 return snapshot.createPair(node.value, childSnapshot);
               } catch (error) {
                 return snapshot.createPair(node.value, '<could not take iframe snapshot>');
@@ -517,11 +475,11 @@ export class Context {
   }
 
   refLocator(ref: string): playwright.Locator {
-    let frame = this._lastSnapshotFrames[0];
+    let frame = this._frameLocators[0];
     const match = ref.match(/^f(\d+)(.*)/);
     if (match) {
       const frameIndex = parseInt(match[1], 10);
-      frame = this._lastSnapshotFrames[frameIndex];
+      frame = this._frameLocators[frameIndex];
       ref = match[2];
     }
 

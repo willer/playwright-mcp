@@ -17,8 +17,6 @@
 import { z } from 'zod';
 import zodToJsonSchema from 'zod-to-json-schema';
 
-import { captureAriaSnapshot, runAndWait } from './utils';
-
 import type * as playwright from 'playwright';
 import type { Tool } from './tool';
 
@@ -28,7 +26,8 @@ const snapshotSchema = z.object({
   compact: z.boolean().optional().default(false).describe('Whether to show only interactive elements (defaults to false). Set to true to focus only on actionable items.')
 });
 
-export const snapshot: Tool = {
+const snapshot: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_snapshot',
     description: 'Capture accessibility snapshot of the current page. By default returns normal page details with truncation to save tokens. Use truncate=false for full details or compact=true to focus only on interactive elements.',
@@ -37,13 +36,13 @@ export const snapshot: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = snapshotSchema.parse(params);
-    return await captureAriaSnapshot(
-      context, 
-      '', 
-      validatedParams.compact,
-      validatedParams.truncate,
-      validatedParams.truncate_length
-    );
+    return await context.currentTab().run(async () => {}, { 
+      captureSnapshot: true,
+      // Use parameters for truncation and compact mode
+      truncate: validatedParams.truncate,
+      truncate_length: validatedParams.truncate_length,
+      compact: validatedParams.compact
+    });
   },
 };
 
@@ -52,7 +51,8 @@ const elementSchema = z.object({
   ref: z.string().describe('Exact target element reference from the page snapshot'),
 });
 
-export const click: Tool = {
+const click: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_click',
     description: 'Perform click on a web page',
@@ -62,22 +62,17 @@ export const click: Tool = {
   handle: async (context, params) => {
     try {
       const validatedParams = elementSchema.parse(params);
-      
-      // First, verify that the ref actually exists before attempting to click
-      const locator = context.refLocator(validatedParams.ref);
-      const count = await locator.count();
-      
-      if (count === 0) {
-        return {
-          content: [{ 
-            type: 'text', 
-            text: `Error: Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
-          }],
-          isError: true
-        };
-      }
-      
-      return runAndWait(context, `"${validatedParams.element}" clicked`, () => locator.click(), true);
+      return await context.currentTab().runAndWaitWithSnapshot(async tab => {
+        const locator = tab.lastSnapshot().refLocator(validatedParams.ref);
+        const count = await locator.count();
+        
+        if (count === 0) {
+          throw new Error(`Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot.`);
+        }
+        await locator.click();
+      }, {
+        status: `Clicked "${validatedParams.element}"`,
+      });
     } catch (error: any) {
       console.error(`Error in browser_click: ${error}`);
       return {
@@ -98,7 +93,8 @@ const dragSchema = z.object({
   endRef: z.string().describe('Exact target element reference from the page snapshot'),
 });
 
-export const drag: Tool = {
+const drag: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_drag',
     description: 'Perform drag and drop between two elements',
@@ -108,37 +104,25 @@ export const drag: Tool = {
   handle: async (context, params) => {
     try {
       const validatedParams = dragSchema.parse(params);
-      
-      // First, verify that both elements exist before attempting to drag
-      const startLocator = context.refLocator(validatedParams.startRef);
-      const endLocator = context.refLocator(validatedParams.endRef);
-      
-      const startCount = await startLocator.count();
-      const endCount = await endLocator.count();
-      
-      if (startCount === 0) {
-        return {
-          content: [{ 
-            type: 'text', 
-            text: `Error: Source element "${validatedParams.startElement}" (ref: ${validatedParams.startRef}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
-          }],
-          isError: true
-        };
-      }
-      
-      if (endCount === 0) {
-        return {
-          content: [{ 
-            type: 'text', 
-            text: `Error: Target element "${validatedParams.endElement}" (ref: ${validatedParams.endRef}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
-          }],
-          isError: true
-        };
-      }
-      
-      return runAndWait(context, `Dragged "${validatedParams.startElement}" to "${validatedParams.endElement}"`, async () => {
+      return await context.currentTab().runAndWaitWithSnapshot(async tab => {
+        const startLocator = tab.lastSnapshot().refLocator(validatedParams.startRef);
+        const endLocator = tab.lastSnapshot().refLocator(validatedParams.endRef);
+        
+        const startCount = await startLocator.count();
+        const endCount = await endLocator.count();
+        
+        if (startCount === 0) {
+          throw new Error(`Source element "${validatedParams.startElement}" (ref: ${validatedParams.startRef}) not found on page. The page may have changed since the last snapshot.`);
+        }
+        
+        if (endCount === 0) {
+          throw new Error(`Target element "${validatedParams.endElement}" (ref: ${validatedParams.endRef}) not found on page. The page may have changed since the last snapshot.`);
+        }
+        
         await startLocator.dragTo(endLocator);
-      }, true);
+      }, {
+        status: `Dragged "${validatedParams.startElement}" to "${validatedParams.endElement}"`,
+      });
     } catch (error: any) {
       console.error(`Error in browser_drag: ${error}`);
       return {
@@ -152,7 +136,8 @@ export const drag: Tool = {
   },
 };
 
-export const hover: Tool = {
+const hover: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_hover',
     description: 'Hover over element on page',
@@ -162,22 +147,18 @@ export const hover: Tool = {
   handle: async (context, params) => {
     try {
       const validatedParams = elementSchema.parse(params);
-      
-      // First, verify that the ref actually exists before attempting to hover
-      const locator = context.refLocator(validatedParams.ref);
-      const count = await locator.count();
-      
-      if (count === 0) {
-        return {
-          content: [{ 
-            type: 'text', 
-            text: `Error: Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
-          }],
-          isError: true
-        };
-      }
-      
-      return runAndWait(context, `Hovered over "${validatedParams.element}"`, () => locator.hover(), true);
+      return await context.currentTab().runAndWaitWithSnapshot(async tab => {
+        const locator = tab.lastSnapshot().refLocator(validatedParams.ref);
+        const count = await locator.count();
+        
+        if (count === 0) {
+          throw new Error(`Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot.`);
+        }
+        
+        await locator.hover();
+      }, {
+        status: `Hovered over "${validatedParams.element}"`,
+      });
     } catch (error: any) {
       console.error(`Error in browser_hover: ${error}`);
       return {
@@ -193,10 +174,12 @@ export const hover: Tool = {
 
 const typeSchema = elementSchema.extend({
   text: z.string().describe('Text to type into the element'),
-  submit: z.boolean().describe('Whether to submit entered text (press Enter after)'),
+  submit: z.boolean().optional().describe('Whether to submit entered text (press Enter after)'),
+  slowly: z.boolean().optional().describe('Whether to type one character at a time. Useful for triggering key handlers in the page. By default entire text is filled in at once.'),
 });
 
-export const type: Tool = {
+const type: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_type',
     description: 'Type text into editable element',
@@ -206,26 +189,27 @@ export const type: Tool = {
   handle: async (context, params) => {
     try {
       const validatedParams = typeSchema.parse(params);
-      
-      // First, verify that the ref actually exists before attempting to type
-      const locator = context.refLocator(validatedParams.ref);
-      const count = await locator.count();
-      
-      if (count === 0) {
-        return {
-          content: [{ 
-            type: 'text', 
-            text: `Error: Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
-          }],
-          isError: true
-        };
-      }
-      
-      return await runAndWait(context, `Typed "${validatedParams.text}" into "${validatedParams.element}"`, async () => {
-        await locator.fill(validatedParams.text);
+      return await context.currentTab().runAndWaitWithSnapshot(async tab => {
+        const locator = tab.lastSnapshot().refLocator(validatedParams.ref);
+        const count = await locator.count();
+        
+        if (count === 0) {
+          throw new Error(`Element "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot.`);
+        }
+        
+        // Use pressSequentially for slowly typing or long text (over 100 chars)
+        if (validatedParams.slowly || validatedParams.text.length > 100) {
+          // Add a 50ms delay if typing slowly to mimic human typing
+          await locator.pressSequentially(validatedParams.text, { delay: validatedParams.slowly ? 50 : 0 });
+        } else {
+          await locator.fill(validatedParams.text);
+        }
+        
         if (validatedParams.submit)
           await locator.press('Enter');
-      }, true);
+      }, {
+        status: `Typed "${validatedParams.text}" into "${validatedParams.element}"`,
+      });
     } catch (error: any) {
       console.error(`Error in browser_type: ${error}`);
       return {
@@ -243,7 +227,8 @@ const selectOptionSchema = elementSchema.extend({
   values: z.array(z.string()).describe('Array of values to select in the dropdown. This can be a single value or multiple values.'),
 });
 
-export const selectOption: Tool = {
+const selectOption: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_select_option',
     description: 'Select an option in a dropdown',
@@ -253,24 +238,18 @@ export const selectOption: Tool = {
   handle: async (context, params) => {
     try {
       const validatedParams = selectOptionSchema.parse(params);
-      
-      // First, verify that the ref actually exists before attempting to select
-      const locator = context.refLocator(validatedParams.ref);
-      const count = await locator.count();
-      
-      if (count === 0) {
-        return {
-          content: [{ 
-            type: 'text', 
-            text: `Error: Dropdown "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot. Please use browser_snapshot to refresh the page data.` 
-          }],
-          isError: true
-        };
-      }
-      
-      return await runAndWait(context, `Selected option in "${validatedParams.element}"`, async () => {
+      return await context.currentTab().runAndWaitWithSnapshot(async tab => {
+        const locator = tab.lastSnapshot().refLocator(validatedParams.ref);
+        const count = await locator.count();
+        
+        if (count === 0) {
+          throw new Error(`Dropdown "${validatedParams.element}" (ref: ${validatedParams.ref}) not found on page. The page may have changed since the last snapshot.`);
+        }
+        
         await locator.selectOption(validatedParams.values);
-      }, true);
+      }, {
+        status: `Selected option in "${validatedParams.element}"`,
+      });
     } catch (error: any) {
       console.error(`Error in browser_select_option: ${error}`);
       return {
@@ -288,7 +267,8 @@ const screenshotSchema = z.object({
   raw: z.boolean().optional().describe('Whether to return without compression (in PNG format). Default is false, which returns a JPEG image.'),
 });
 
-export const screenshot: Tool = {
+const screenshot: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_take_screenshot',
     description: `Take a screenshot of the current page. EXPENSIVE: Use only when verifying layouts or as a last resort when other approaches fail. Costs many tokens due to image size. Use browser_snapshot for actions, not this.`,
@@ -297,11 +277,21 @@ export const screenshot: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = screenshotSchema.parse(params);
-    const page = context.existingPage();
+    const tab = context.currentTab();
     const options: playwright.PageScreenshotOptions = validatedParams.raw ? { type: 'png', scale: 'css' } : { type: 'jpeg', quality: 50, scale: 'css' };
-    const screenshot = await page.screenshot(options);
+    const screenshot = await tab.page.screenshot(options);
     return {
       content: [{ type: 'image', data: screenshot.toString('base64'), mimeType: validatedParams.raw ? 'image/png' : 'image/jpeg' }],
     };
   },
 };
+
+export default [
+  snapshot,
+  click,
+  drag,
+  hover,
+  type,
+  selectOption,
+  screenshot,
+];

@@ -14,75 +14,17 @@
  * limitations under the License.
  */
 
-import os from 'os';
-import path from 'path';
-
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-import { captureAriaSnapshot, runAndWait, sanitizeForFilePath, normalizeUrl } from './utils';
-
-import type { ToolFactory, Tool } from './tool';
-
-const navigateSchema = z.object({
-  url: z.string().describe('The URL to navigate to'),
-});
-
-export const navigate: ToolFactory = snapshot => ({
-  schema: {
-    name: 'browser_navigate',
-    description: 'Navigate to a URL. Does not automatically capture a snapshot to save tokens. Use browser_snapshot after navigation if you need to see the page content.',
-    inputSchema: zodToJsonSchema(navigateSchema),
-  },
-  handle: async (context, params) => {
-    const validatedParams = navigateSchema.parse(params);
-    const normalizedUrl = normalizeUrl(validatedParams.url);
-    const page = await context.createPage();
-    await page.goto(normalizedUrl, { waitUntil: 'domcontentloaded' });
-    // Cap load event to 5 seconds, the page is operational at this point.
-    await page.waitForLoadState('load', { timeout: 5000 }).catch(() => {});
-    if (snapshot)
-      return captureAriaSnapshot(context);
-    return {
-      content: [{
-        type: 'text',
-        text: `Navigated to ${normalizedUrl}`,
-      }],
-    };
-  },
-});
-
-const goBackSchema = z.object({});
-
-export const goBack: ToolFactory = snapshot => ({
-  schema: {
-    name: 'browser_go_back',
-    description: 'Go back to the previous page. Does not automatically capture a snapshot to save tokens. Use browser_snapshot afterwards if needed.',
-    inputSchema: zodToJsonSchema(goBackSchema),
-  },
-  handle: async context => {
-    return await runAndWait(context, 'Navigated back', async page => page.goBack(), snapshot);
-  },
-});
-
-const goForwardSchema = z.object({});
-
-export const goForward: ToolFactory = snapshot => ({
-  schema: {
-    name: 'browser_go_forward',
-    description: 'Go forward to the next page. Does not automatically capture a snapshot to save tokens. Use browser_snapshot afterwards if needed.',
-    inputSchema: zodToJsonSchema(goForwardSchema),
-  },
-  handle: async context => {
-    return await runAndWait(context, 'Navigated forward', async page => page.goForward(), snapshot);
-  },
-});
+import type { Tool } from './tool';
 
 const waitSchema = z.object({
   time: z.number().describe('The time to wait in seconds'),
 });
 
-export const wait: Tool = {
+const wait: Tool = {
+  capability: 'wait',
   schema: {
     name: 'browser_wait',
     description: 'Wait for a specified time in seconds',
@@ -100,48 +42,10 @@ export const wait: Tool = {
   },
 };
 
-const pressKeySchema = z.object({
-  key: z.string().describe('Name of the key to press or a character to generate, such as `ArrowLeft` or `a`'),
-});
-
-export const pressKey: Tool = {
-  schema: {
-    name: 'browser_press_key',
-    description: 'Press a key on the keyboard',
-    inputSchema: zodToJsonSchema(pressKeySchema),
-  },
-  handle: async (context, params) => {
-    const validatedParams = pressKeySchema.parse(params);
-    return await runAndWait(context, `Pressed key ${validatedParams.key}`, async page => {
-      await page.keyboard.press(validatedParams.key);
-    });
-  },
-};
-
-const pdfSchema = z.object({});
-
-export const pdf: Tool = {
-  schema: {
-    name: 'browser_save_as_pdf',
-    description: 'Save page as PDF',
-    inputSchema: zodToJsonSchema(pdfSchema),
-  },
-  handle: async context => {
-    const page = context.existingPage();
-    const fileName = path.join(os.tmpdir(), sanitizeForFilePath(`page-${new Date().toISOString()}`)) + '.pdf';
-    await page.pdf({ path: fileName });
-    return {
-      content: [{
-        type: 'text',
-        text: `Saved as ${fileName}`,
-      }],
-    };
-  },
-};
-
 const closeSchema = z.object({});
 
-export const close: Tool = {
+const close: Tool = {
+  capability: 'core',
   schema: {
     name: 'browser_close',
     description: 'Close the page',
@@ -158,37 +62,7 @@ export const close: Tool = {
   },
 };
 
-const chooseFileSchema = z.object({
-  paths: z.array(z.string()).describe('The absolute paths to the files to upload. Can be a single file or multiple files.'),
-});
-
-export const chooseFile: ToolFactory = snapshot => ({
-  schema: {
-    name: 'browser_choose_file',
-    description: 'Choose one or multiple files to upload. Does not automatically capture a snapshot to save tokens. Use browser_snapshot afterwards if needed.',
-    inputSchema: zodToJsonSchema(chooseFileSchema),
-  },
-  handle: async (context, params) => {
-    const validatedParams = chooseFileSchema.parse(params);
-    return await runAndWait(context, `Chose files ${validatedParams.paths.join(', ')}`, async () => {
-      await context.submitFileChooser(validatedParams.paths);
-    }, snapshot);
-  },
-});
-
-export const install: Tool = {
-  schema: {
-    name: 'browser_install',
-    description: 'Install the browser specified in the config. Call this if you get an error about the browser not being installed.',
-    inputSchema: zodToJsonSchema(z.object({})),
-  },
-  handle: async context => {
-    const channel = await context.install();
-    return {
-      content: [{
-        type: 'text',
-        text: `Browser ${channel} installed`,
-      }],
-    };
-  },
-};
+export default [
+  close,
+  wait,
+];

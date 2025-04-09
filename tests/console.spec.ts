@@ -14,23 +14,22 @@
  * limitations under the License.
  */
 
-import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
+import { test, expect } from './fixtures';
 
-import type { Tool } from './tool';
+test('browser://console', async ({ client }) => {
+  await client.callTool({
+    name: 'browser_navigate',
+    arguments: {
+      url: 'data:text/html,<html><script>console.log("Hello, world!");console.error("Error"); </script></html>',
+    },
+  });
 
-export const console: Tool = {
-  schema: {
-    name: 'browser_console',
-    description: 'View the page console messages',
-    inputSchema: zodToJsonSchema(z.object({})),
-  },
-
-  handle: async context => {
-    const messages = await context.currentTab().console();
-    const log = messages.map(message => `[${message.type().toUpperCase()}] ${message.text()}`).join('\n');
-    return {
-      content: [{ type: 'text', text: log }],
-    };
-  },
-};
+  const resource = await client.readResource({
+    uri: 'browser://console',
+  });
+  expect(resource.contents).toEqual([{
+    uri: 'browser://console',
+    mimeType: 'text/plain',
+    text: '[LOG] Hello, world!\n[ERROR] Error',
+  }]);
+});

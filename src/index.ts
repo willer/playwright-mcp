@@ -15,26 +15,22 @@
  */
 
 import { createServerWithTools } from './server';
-import * as snapshot from './tools/snapshot';
-import * as common from './tools/common';
-import * as screenshot from './tools/screenshot';
-import { registerAgentTools } from './tools/agent-index';
+import common from './tools/common';
+import files from './tools/files';
+import install from './tools/install';
+import keyboard from './tools/keyboard';
+import navigate from './tools/navigate';
+import pdf from './tools/pdf';
+import snapshot from './tools/snapshot';
+import tabs from './tools/tabs';
+import screen from './tools/screen';
 import * as cua from './tools/cua';
-import { console } from './tools/console';
+import { console as consoleResource } from './resources/console';
 
-import type { Tool } from './tools/tool';
+import type { Tool, ToolCapability } from './tools/tool';
 import type { Resource } from './resources/resource';
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import type { LaunchOptions } from 'playwright';
-
-const commonTools: Tool[] = [
-  common.pressKey,
-  common.wait,
-  common.pdf,
-  common.close,
-  common.install,
-  console,
-];
 
 const cuaTools: Tool[] = [
   cua.agentStart,
@@ -46,34 +42,31 @@ const cuaTools: Tool[] = [
 ];
 
 const snapshotTools: Tool[] = [
-  // Don't automatically take snapshots on navigation actions to save tokens
-  common.navigate(false), 
-  common.goBack(false),
-  common.goForward(false),
-  common.chooseFile(false),
-  snapshot.snapshot,
-  snapshot.click,
-  snapshot.hover,
-  snapshot.type,
-  snapshot.selectOption,
-  snapshot.screenshot,
-  ...commonTools,
+  ...common,
+  ...files(true),
+  ...install,
+  ...keyboard(true),
+  ...navigate(true),
+  ...pdf,
+  ...snapshot,
+  ...tabs(true),
+  ...cuaTools,
 ];
 
 const screenshotTools: Tool[] = [
-  common.navigate(false),
-  common.goBack(false),
-  common.goForward(false),
-  common.chooseFile(false),
-  screenshot.screenshot,
-  screenshot.moveMouse,
-  screenshot.click,
-  screenshot.drag,
-  screenshot.type,
-  ...commonTools,
+  ...common,
+  ...files(false),
+  ...install,
+  ...keyboard(false),
+  ...navigate(false),
+  ...pdf,
+  ...screen,
+  ...tabs(false),
 ];
 
-const resources: Resource[] = [];
+const resources: Resource[] = [
+  consoleResource,
+];
 
 type Options = {
   browserName?: 'chromium' | 'firefox' | 'webkit';
@@ -81,15 +74,14 @@ type Options = {
   launchOptions?: LaunchOptions;
   cdpEndpoint?: string;
   vision?: boolean;
+  capabilities?: ToolCapability[];
 };
 
 const packageJSON = require('../package.json');
 
 export function createServer(options?: Options): Server {
-  const baseTools = options?.vision ? screenshotTools : snapshotTools;
-  // Include our custom CUA tools instead of the ones from agent-tools.ts
-  const tools = [...baseTools, ...cuaTools];
-
+  const allTools = options?.vision ? screenshotTools : snapshotTools;
+  const tools = allTools.filter(tool => !options?.capabilities || tool.capability === 'core' || options.capabilities.includes(tool.capability));
   return createServerWithTools({
     name: 'Playwright',
     version: packageJSON.version,
