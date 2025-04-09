@@ -36,12 +36,14 @@ const snapshot: Tool = {
 
   handle: async (context, params) => {
     const validatedParams = snapshotSchema.parse(params);
-    return await context.currentTab().run(async () => {}, { 
-      captureSnapshot: true,
-      // Use parameters for truncation and compact mode
+    // Store the parameters in context for later use
+    context._snapshotOptions = {
       truncate: validatedParams.truncate,
       truncate_length: validatedParams.truncate_length,
       compact: validatedParams.compact
+    };
+    return await context.currentTab().run(async () => {}, { 
+      captureSnapshot: true
     });
   },
 };
@@ -200,7 +202,7 @@ const type: Tool = {
         // Use pressSequentially for slowly typing or long text (over 100 chars)
         if (validatedParams.slowly || validatedParams.text.length > 100) {
           // Add a 50ms delay if typing slowly to mimic human typing
-          await locator.pressSequentially(validatedParams.text, { delay: validatedParams.slowly ? 50 : 0 });
+          await locator.pressSequentially(validatedParams.text, { delay: validatedParams.slowly ? 50 : 10 });
         } else {
           await locator.fill(validatedParams.text);
         }
