@@ -65,7 +65,7 @@ After installation, the Playwright MCP server will be available for use with you
 
 #### Pre-commit Hooks
 
-This project uses pre-commit hooks to ensure code quality. The hooks run the following checks:
+This project uses pre-commit hooks to ensure code quality before committing changes. The hooks run the following checks:
 
 1. **Linting**: Runs ESLint on all staged files
 2. **TypeScript Build**: Ensures the project builds successfully
